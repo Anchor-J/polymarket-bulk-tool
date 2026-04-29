@@ -1,16 +1,18 @@
-# Polymarket Bulk Query
+# Polymarket 地址批量分析
 
-一个独立实现的 Polymarket 批量数据查询工具。项目使用 Next.js、TypeScript 和 Tailwind CSS，可直接部署到 Vercel。
+一个独立实现的 Polymarket 批量地址账户详情查询工具。项目使用 Next.js、TypeScript 和 Tailwind CSS，可直接部署到 Vercel。
+
+数据源决策见 [docs/API_NOTES.md](docs/API_NOTES.md)。
 
 ## 功能
 
-- 批量输入 Polymarket market URL、slug 或 token id，每行一个
-- 批量输入 0x 钱包地址，查询公开持仓
-- 后端 API：`POST /api/markets/bulk`
-- 后端 API：`POST /api/positions/bulk`
-- 表格展示市场标题、链接、Yes/No 价格、成交量、流动性、结束状态和结束时间
-- 表格展示地址持仓、方向、数量、价格、当前价值和 PnL
-- loading 状态、错误提示、CSV 导出
+- 批量输入 Polymarket EOA 地址或 proxy wallet 地址，每行一个
+- 前端最多接受 500 个地址，并按每批 25 个地址调用后端
+- 后端 API：`POST /api/accounts/bulk`
+- 自动尝试通过 Gamma public-profile 获取 proxyWallet
+- 查询当前持仓、历史已实现盈亏、交易记录、pUSD 可用余额
+- 展示净资产、盈亏、可用、持仓、交易额、池子数、最后活跃、活跃天数、活跃月数
+- 支持 CSV / JSON 导出
 - 不需要数据库、登录、钱包连接、私钥或交易能力
 
 ## 本地运行
@@ -29,61 +31,66 @@ npm run typecheck
 npm run build
 ```
 
+## 环境变量
+
+推荐配置：
+
+```bash
+POLYGON_RPC_URLS=https://polygon-bor.publicnode.com,https://rpc-mainnet.polygon.technology,https://1rpc.io/matic
+```
+
+兼容旧配置：
+
+```bash
+POLYGON_RPC_URL=https://your-polygon-rpc.example
+```
+
+读取优先级：
+
+1. 如果 `POLYGON_RPC_URLS` 存在，按逗号分割后依次尝试。
+2. 否则如果 `POLYGON_RPC_URL` 存在，使用单个 RPC。
+3. 如果两个变量都没有，pUSD 可用余额显示为 0，并在 debug 中记录 `POLYGON_RPC_URLS not configured`。
+
+配置位置：
+
+- 本地开发放在 `.env.local`。
+- Vercel 线上放在 Project Settings 的 Environment Variables。
+- 不要把带 API key 的私有 RPC 提交到 GitHub。
+- 公共 RPC 可能限流，生产环境建议使用稳定 RPC 服务。
+
+预留但默认不启用：
+
+```bash
+USE_PROXY=false
+HTTPS_PROXY=
+```
+
+不要把代理账号、密码、IP 或私有 RPC key 写进代码、README、前端或 GitHub。
+
 ## Vercel 部署
 
 1. 把项目推送到 GitHub、GitLab 或 Bitbucket。
 2. 在 Vercel 中选择 `Add New Project`，导入该仓库。
 3. Framework Preset 选择 `Next.js`。
-4. 使用默认命令：
+4. 如需稳定读取 pUSD 余额，在 Vercel Project Settings 里添加 `POLYGON_RPC_URLS`，也兼容旧变量 `POLYGON_RPC_URL`。
+5. 使用默认命令：
    - Install Command: `npm install`
    - Build Command: `npm run build`
    - Output Directory: 留空
-5. 点击 `Deploy`。
+6. 点击 `Deploy`。
+
+也可以用 CLI：
+
+```bash
+npx vercel deploy --prod
+```
 
 ## API
 
 请求：
 
 ```http
-POST /api/markets/bulk
-Content-Type: application/json
-
-{
-  "inputs": [
-    "https://polymarket.com/event/example-market-slug",
-    "example-market-slug",
-    "71321045679252212594626385532706912750332728571942532289631379312455583992563"
-  ]
-}
-```
-
-返回：
-
-```json
-{
-  "data": [
-    {
-      "input": "example-market-slug",
-      "title": "Market title",
-      "link": "https://polymarket.com/event/example-market-slug",
-      "yesPrice": 0.52,
-      "noPrice": 0.48,
-      "volumeUsd": 12000,
-      "volumeShares": 9000,
-      "liquidity": 4500,
-      "ended": false,
-      "endTime": "2026-12-31T00:00:00Z"
-    }
-  ],
-  "errors": [],
-  "count": 1
-}
-```
-
-地址持仓请求：
-
-```http
-POST /api/positions/bulk
+POST /api/accounts/bulk
 Content-Type: application/json
 
 {
@@ -93,41 +100,62 @@ Content-Type: application/json
 }
 ```
 
+单次 API 最多 25 个地址。前端会自动把最多 500 个地址拆成多个批次。
+
 返回：
 
 ```json
 {
-  "data": [
+  "summary": {
+    "totalPnl": 0,
+    "totalAvailable": 0,
+    "totalPositionValue": 0,
+    "totalNetAsset": 0
+  },
+  "accounts": [
     {
-      "address": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
-      "title": "Market title",
-      "link": "https://polymarket.com/event/example-market-slug",
-      "outcome": "Yes",
-      "size": 100,
-      "avgPrice": 0.45,
-      "currentPrice": 0.52,
-      "currentValue": 52,
-      "cashPnl": 7,
-      "percentPnl": 15.56,
-      "endTime": "2026-12-31T00:00:00Z"
+      "inputAddress": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+      "proxyWallet": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+      "netAsset": 100,
+      "pnl": 12.5,
+      "available": 40,
+      "positionValue": 60,
+      "volumeUsd": 1200,
+      "volumeShares": 900,
+      "marketCount": 8,
+      "lastActiveAt": "2026-04-29T00:00:00.000Z",
+      "lastActiveDaysAgo": 0,
+      "lastActiveText": "今天",
+      "activeDays": 4,
+      "activeMonths": 2,
+      "positionCount": 3,
+      "tradeCount": 20,
+      "error": null
     }
-  ],
-  "errors": [],
-  "count": 1
+  ]
 }
 ```
 
+## 计算规则
+
+- `proxyWallet`：优先读取 `https://gamma-api.polymarket.com/public-profile?address={address}`，没有则使用输入地址。
+- `available`：读取 Polygon 上 pUSD 合约 `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` 的 `balanceOf(proxyWallet)`，decimals = 6。RPC 按 `POLYGON_RPC_URLS` 列表顺序 fallback，兼容旧变量 `POLYGON_RPC_URL`。
+- `positionValue`：当前持仓 `currentValue` 求和。
+- `pnl`：当前持仓 `cashPnl` 求和 + closed positions 的 `realizedPnl` 求和。
+- `volumeUsd`：交易记录 `sum(price * size)`。
+- `volumeShares`：交易记录 `sum(size)`。
+- `marketCount`：交易记录唯一 `conditionId` 数量。
+- `lastActiveText`：基于交易记录最大 `timestamp`，显示 `今天` / `1天前` / `X天前` / `-`。
+- `activeDays`：交易记录唯一 `YYYY-MM-DD` 数量。
+- `activeMonths`：交易记录唯一 `YYYY-MM` 数量。
+- `netAsset`：`available + positionValue`。
+
 ## 数据来源
 
-本项目只读取 Polymarket 公开数据：
+本项目只读取公开数据：
 
-- Gamma API：`https://gamma-api.polymarket.com`
-- Data API：`https://data-api.polymarket.com`
-- 使用到的接口：`/markets?slug=...`、`/events?slug=...`、`/markets?clob_token_ids=...`
-- 使用到的接口：`/positions?user=...`
-
-官方文档：
-
-- https://docs.polymarket.com/api-reference
-- https://docs.polymarket.com/api-reference/markets/list-markets
-- https://docs.polymarket.com/api-reference/markets/get-market-by-slug
+- Gamma API：`https://gamma-api.polymarket.com/public-profile`
+- Data API：`https://data-api.polymarket.com/positions`
+- Data API：`https://data-api.polymarket.com/closed-positions`
+- Data API：`https://data-api.polymarket.com/trades`
+- Polygon RPC：ERC20 `balanceOf` 读取 pUSD 余额

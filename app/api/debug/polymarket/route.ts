@@ -1,0 +1,496 @@
+import { NextResponse } from "next/server";
+
+const GAMMA_API_BASE_URL = "https://gamma-api.polymarket.com";
+const DATA_API_BASE_URL = "https://data-api.polymarket.com";
+const PUSD_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
+const DEBUG_TIMEOUT_MS = 12_000;
+const RESPONSE_BODY_SNIPPET_LENGTH = 300;
+
+type RawRecord = Record<string, unknown>;
+
+type RequestSource =
+  | "gamma-profile"
+  | "positions"
+  | "closed-positions"
+  | "trades"
+  | "pusd-balance-rpc";
+
+type DebugStep = {
+  source: string;
+  ok: boolean;
+  status?: number;
+  url?: string;
+  sample?: unknown;
+  error?: string;
+  durationMs: number;
+  rpcConfigured?: boolean;
+  rpcTriedCount?: number;
+  rpcSuccessIndex?: number | null;
+};
+
+type FetchDiagnostic = {
+  source: RequestSource;
+  url: string;
+  status: number | null;
+  bodySnippet: string;
+  timeout: boolean;
+  retry: number;
+  message: string;
+};
+
+class DiagnosticFetchError extends Error {
+  diagnostic: FetchDiagnostic;
+
+  constructor(diagnostic: FetchDiagnostic) {
+    super(formatFetchDiagnostic(diagnostic));
+    this.name = "DiagnosticFetchError";
+    this.diagnostic = diagnostic;
+  }
+}
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(request: Request) {
+  const requestUrl = new URL(request.url);
+  const address = normalizeAddress(requestUrl.searchParams.get("address") ?? "");
+
+  if (!address) {
+    return NextResponse.json(
+      {
+        error: "请提供合法的 address 查询参数，例如 /api/debug/polymarket?address=0x..."
+      },
+      { status: 400 }
+    );
+  }
+
+  const steps: DebugStep[] = [];
+  let proxyWallet = address;
+
+  const profileUrl = `${GAMMA_API_BASE_URL}/public-profile?address=${encodeURIComponent(address)}`;
+  const profileResult = await runJsonDiagnostic("gamma-profile", profileUrl);
+  steps.push(profileResult.step);
+
+  if (profileResult.data) {
+    proxyWallet =
+      findAddressByKey(profileResult.data, [
+        "proxyWallet",
+        "proxy_wallet",
+        "proxyAddress",
+        "proxy_address"
+      ]) ?? address;
+  }
+
+  const positionsParams = new URLSearchParams({
+    user: proxyWallet,
+    limit: "2"
+  });
+  const positionsResult = await runJsonDiagnostic(
+    "positions",
+    `${DATA_API_BASE_URL}/positions?${positionsParams.toString()}`
+  );
+  steps.push(positionsResult.step);
+
+  const closedPositionsParams = new URLSearchParams({
+    user: proxyWallet,
+    limit: "2",
+    offset: "0"
+  });
+  const closedPositionsResult = await runJsonDiagnostic(
+    "closed-positions",
+    `${DATA_API_BASE_URL}/closed-positions?${closedPositionsParams.toString()}`
+  );
+  steps.push(closedPositionsResult.step);
+
+  const tradesParams = new URLSearchParams({
+    user: proxyWallet,
+    limit: "2",
+    offset: "0"
+  });
+  const tradesResult = await runJsonDiagnostic(
+    "trades",
+    `${DATA_API_BASE_URL}/trades?${tradesParams.toString()}`
+  );
+  steps.push(tradesResult.step);
+
+  steps.push(await runPusdRpcDiagnostics(proxyWallet));
+
+  return NextResponse.json({
+    inputAddress: address,
+    proxyWallet,
+    steps
+  });
+}
+
+async function runPusdRpcDiagnostics(proxyWallet: string): Promise<DebugStep> {
+  const startedAt = Date.now();
+  const rpcUrls = getPolygonRpcUrls();
+
+  if (rpcUrls.length === 0) {
+    return {
+      source: "pusd-balance-rpc",
+      ok: false,
+      error: "POLYGON_RPC_URLS not configured",
+      durationMs: Date.now() - startedAt,
+      rpcConfigured: false,
+      rpcTriedCount: 0,
+      rpcSuccessIndex: null
+    };
+  }
+
+  const errors: string[] = [];
+
+  for (let index = 0; index < rpcUrls.length; index += 1) {
+    const result = await runJsonDiagnostic(
+      "pusd-balance-rpc",
+      rpcUrls[index],
+      buildPusdRpcRequest(proxyWallet)
+    );
+    const rpcSemanticError = getPusdRpcSemanticError(result.step, result.data);
+
+    if (result.step.ok && !rpcSemanticError) {
+      return {
+        ...result.step,
+        durationMs: Date.now() - startedAt,
+        rpcConfigured: true,
+        rpcTriedCount: index + 1,
+        rpcSuccessIndex: index
+      };
+    }
+
+    errors.push(rpcSemanticError || result.step.error || "unknown RPC error");
+  }
+
+  return {
+    source: "pusd-balance-rpc",
+    ok: false,
+    error: `pUSD balance fetch failed: all RPC endpoints failed; lastError=${errors.at(-1) ?? "unknown"}`,
+    durationMs: Date.now() - startedAt,
+    rpcConfigured: true,
+    rpcTriedCount: rpcUrls.length,
+    rpcSuccessIndex: null
+  };
+}
+
+function buildPusdRpcRequest(proxyWallet: string): RequestInit {
+  return {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_call",
+      params: [
+        {
+          to: PUSD_ADDRESS,
+          data: `0x70a08231${proxyWallet.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`
+        },
+        "latest"
+      ]
+    })
+  };
+}
+
+function getPusdRpcSemanticError(step: DebugStep, data: unknown): string | null {
+  if (!step.ok) {
+    return step.error ?? "unknown RPC error";
+  }
+
+  if (!isRecord(data)) {
+    return formatFetchDiagnostic({
+      source: "pusd-balance-rpc",
+      url: step.url ?? "[rpc-endpoint]",
+      status: step.status ?? 200,
+      bodySnippet: createBodySnippet(JSON.stringify(data)),
+      timeout: false,
+      retry: 0,
+      message: "invalid RPC response"
+    });
+  }
+
+  const rpcError = data.error;
+  const result = data.result;
+
+  if (!rpcError && typeof result === "string") {
+    return null;
+  }
+
+  return formatFetchDiagnostic({
+    source: "pusd-balance-rpc",
+    url: step.url ?? "[rpc-endpoint]",
+    status: step.status ?? 200,
+    bodySnippet: createBodySnippet(JSON.stringify(data)),
+    timeout: false,
+    retry: 0,
+    message: isRecord(rpcError) && typeof rpcError.message === "string"
+      ? rpcError.message
+      : "empty RPC balance result"
+  });
+}
+
+async function runJsonDiagnostic(
+  source: RequestSource,
+  url: string,
+  init: RequestInit = {}
+): Promise<{ step: DebugStep; data: unknown | null }> {
+  const startedAt = Date.now();
+
+  try {
+    const result = await fetchJsonOnce(source, url, init);
+
+    return {
+      data: result.data,
+      step: {
+        source,
+        ok: true,
+        status: result.status,
+        url: sanitizeUrl(source, url),
+        sample: sampleData(result.data),
+        durationMs: Date.now() - startedAt
+      }
+    };
+  } catch (error) {
+    const diagnosticError = toDiagnosticFetchError(source, url, 0, error);
+
+    return {
+      data: null,
+      step: {
+        source,
+        ok: false,
+        status: diagnosticError.diagnostic.status ?? undefined,
+        url: diagnosticError.diagnostic.url,
+        error: diagnosticError.message,
+        durationMs: Date.now() - startedAt
+      }
+    };
+  }
+}
+
+async function fetchJsonOnce(
+  source: RequestSource,
+  url: string,
+  init: RequestInit
+): Promise<{ status: number; data: unknown }> {
+  const response = await fetchWithTimeout(url, init);
+  const body = await response.text().catch(() => "");
+  const bodySnippet = createBodySnippet(body);
+
+  if (!response.ok) {
+    throw new DiagnosticFetchError({
+      source,
+      url: sanitizeUrl(source, url),
+      status: response.status,
+      bodySnippet,
+      timeout: false,
+      retry: 0,
+      message: response.statusText || "HTTP request failed"
+    });
+  }
+
+  try {
+    return {
+      status: response.status,
+      data: JSON.parse(body) as unknown
+    };
+  } catch (error) {
+    throw new DiagnosticFetchError({
+      source,
+      url: sanitizeUrl(source, url),
+      status: response.status,
+      bodySnippet,
+      timeout: false,
+      retry: 0,
+      message: `JSON parse failed: ${getErrorMessage(error)}`
+    });
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEBUG_TIMEOUT_MS);
+  const headers = new Headers(init.headers);
+
+  if (!headers.has("accept")) {
+    headers.set("accept", "application/json");
+  }
+
+  try {
+    return await fetch(url, {
+      ...init,
+      headers,
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function toDiagnosticFetchError(
+  source: RequestSource,
+  url: string,
+  retry: number,
+  error: unknown
+): DiagnosticFetchError {
+  if (error instanceof DiagnosticFetchError) {
+    return error;
+  }
+
+  const timeout = isAbortError(error);
+  const message = getErrorMessage(error);
+
+  return new DiagnosticFetchError({
+    source,
+    url: sanitizeUrl(source, url),
+    status: null,
+    bodySnippet: "",
+    timeout,
+    retry,
+    message: timeout ? `timeout after ${DEBUG_TIMEOUT_MS}ms: ${message}` : message
+  });
+}
+
+function formatFetchDiagnostic(diagnostic: FetchDiagnostic): string {
+  return [
+    `source=${diagnostic.source}`,
+    `url=${diagnostic.url}`,
+    `status=${diagnostic.status ?? "n/a"}`,
+    `body=${diagnostic.bodySnippet || "(empty)"}`,
+    `timeout=${diagnostic.timeout ? "true" : "false"}`,
+    `retry=${diagnostic.retry}`,
+    `error=${diagnostic.message || "(none)"}`
+  ].join(" | ");
+}
+
+function sampleData(data: unknown): unknown {
+  if (Array.isArray(data)) {
+    return data.slice(0, 2);
+  }
+
+  if (!isRecord(data)) {
+    return data;
+  }
+
+  const sampledEntries = Object.entries(data).slice(0, 12).map(([key, value]) => {
+    if (Array.isArray(value)) {
+      return [key, value.slice(0, 2)] as const;
+    }
+
+    if (isRecord(value)) {
+      return [key, Object.fromEntries(Object.entries(value).slice(0, 8))] as const;
+    }
+
+    return [key, value] as const;
+  });
+
+  return Object.fromEntries(sampledEntries);
+}
+
+function getPolygonRpcUrls(): string[] {
+  const listValue = process.env.POLYGON_RPC_URLS?.trim();
+
+  if (listValue) {
+    return listValue
+      .split(",")
+      .map((url) => url.trim())
+      .filter(Boolean);
+  }
+
+  const legacyValue = process.env.POLYGON_RPC_URL?.trim();
+  return legacyValue ? [legacyValue] : [];
+}
+
+function normalizeAddress(input: string): string | null {
+  const value = input.trim().replace(/^["']|["']$/g, "");
+  return /^0x[a-f0-9]{40}$/i.test(value) ? value : null;
+}
+
+function findAddressByKey(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findAddressByKey(item, keys);
+
+      if (nested) {
+        return nested;
+      }
+    }
+
+    return null;
+  }
+
+  const record = value as RawRecord;
+
+  for (const key of keys) {
+    const field = record[key];
+
+    if (typeof field === "string" && normalizeAddress(field)) {
+      return field;
+    }
+  }
+
+  for (const nested of Object.values(record)) {
+    const nestedAddress = findAddressByKey(nested, keys);
+
+    if (nestedAddress) {
+      return nestedAddress;
+    }
+  }
+
+  return null;
+}
+
+function createBodySnippet(body: string): string {
+  return body.replace(/\s+/g, " ").trim().slice(0, RESPONSE_BODY_SNIPPET_LENGTH);
+}
+
+function sanitizeUrl(source: RequestSource, url: string): string {
+  try {
+    const parsed = new URL(url);
+
+    if (source === "pusd-balance-rpc") {
+      return `${parsed.origin}/[rpc-endpoint]`;
+    }
+
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (/api|key|token|secret|password/i.test(key)) {
+        parsed.searchParams.set(key, "[redacted]");
+      }
+    }
+
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "unknown error";
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || /abort|timeout/i.test(error.message))
+  );
+}
+
+function isRecord(value: unknown): value is RawRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
