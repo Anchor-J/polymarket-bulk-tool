@@ -26,6 +26,8 @@ type AccountDetail = {
   activeMonths: number;
   positionCount: number;
   tradeCount: number;
+  warnings: string[];
+  fatalError: string | null;
   error: string | null;
 };
 
@@ -74,6 +76,8 @@ const exportFields: Array<keyof AccountDetail> = [
   "activeMonths",
   "positionCount",
   "tradeCount",
+  "warnings",
+  "fatalError",
   "error"
 ];
 
@@ -90,10 +94,11 @@ export default function Home() {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [search, setSearch] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const [retryingAddress, setRetryingAddress] = useState("");
 
   const inputCount = useMemo(() => parseAddressLines(query).length, [query]);
   const summary = useMemo(() => buildSummary(accounts), [accounts]);
-  const successfulCount = accounts.filter((account) => !account.error).length;
+  const successfulCount = accounts.filter((account) => !account.fatalError).length;
   const filteredAccounts = useMemo(() => {
     const keyword = search.trim().toLowerCase();
 
@@ -102,7 +107,13 @@ export default function Home() {
     }
 
     return accounts.filter((account) =>
-      [account.inputAddress, account.proxyWallet, account.error]
+      [
+        account.inputAddress,
+        account.proxyWallet,
+        account.fatalError,
+        account.error,
+        ...account.warnings
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(keyword))
     );
@@ -172,6 +183,33 @@ export default function Home() {
     }
 
     void copyText(buildTsv(accounts), "全部地址信息");
+  }
+
+  async function retryAccount(address: string) {
+    setRetryingAddress(address);
+    setCopyStatus("");
+
+    try {
+      const payload = await requestAccountBatch([address]);
+      const nextAccount = payload.accounts[0] ?? emptyAccount(address, "单行重新查询无返回结果");
+
+      setAccounts((current) =>
+        current.map((account) =>
+          account.inputAddress === address ? nextAccount : account
+        )
+      );
+    } catch (retryError) {
+      const message =
+        retryError instanceof Error ? retryError.message : "单行重新查询失败";
+
+      setAccounts((current) =>
+        current.map((account) =>
+          account.inputAddress === address ? emptyAccount(address, message) : account
+        )
+      );
+    } finally {
+      setRetryingAddress("");
+    }
   }
 
   function exportCsv() {
@@ -307,7 +345,25 @@ export default function Home() {
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.activeMonths}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.positionCount}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.tradeCount}</td>
-                      <td className="min-w-56 px-3 py-3 text-gray-700">{account.error ? <span className="text-amber-800">{account.error}</span> : <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">OK</span>}</td>
+                      <td className="min-w-64 px-3 py-3 text-gray-700">
+                        {account.fatalError ? (
+                          <div className="space-y-2">
+                            <span className="block text-red-700">{account.fatalError}</span>
+                            <button
+                              type="button"
+                              onClick={() => retryAccount(account.inputAddress)}
+                              disabled={retryingAddress === account.inputAddress || isLoading}
+                              className="rounded border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                            >
+                              {retryingAddress === account.inputAddress ? "重查中..." : "重新查询"}
+                            </button>
+                          </div>
+                        ) : account.warnings.length > 0 ? (
+                          <span className="text-amber-700">{account.warnings.join("; ")}</span>
+                        ) : (
+                          <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">OK</span>
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -336,7 +392,10 @@ async function requestAccountBatch(addresses: string[]): Promise<BulkAccountsRes
         throw new Error(payload.error || "批次查询失败：" + response.status);
       }
 
-      return { summary: payload.summary ?? emptySummary(), accounts: payload.accounts ?? [] };
+      return {
+        summary: payload.summary ?? emptySummary(),
+        accounts: (payload.accounts ?? []).map(normalizeAccount)
+      };
     } catch (error) {
       lastError = error;
       if (attempt < BATCH_RETRY_ATTEMPTS - 1) {
@@ -346,6 +405,17 @@ async function requestAccountBatch(addresses: string[]): Promise<BulkAccountsRes
   }
 
   throw lastError instanceof Error ? lastError : new Error("批次查询失败");
+}
+
+function normalizeAccount(account: AccountDetail): AccountDetail {
+  const fatalError = account.fatalError ?? account.error ?? null;
+
+  return {
+    ...account,
+    warnings: Array.isArray(account.warnings) ? account.warnings : [],
+    fatalError,
+    error: account.error ?? fatalError
+  };
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -364,7 +434,7 @@ function parseAddressLines(value: string): string[] {
 }
 
 function buildSummary(accounts: AccountDetail[]): AccountSummary {
-  const successfulAccounts = accounts.filter((account) => !account.error);
+  const successfulAccounts = accounts.filter((account) => !account.fatalError);
   return {
     totalPnl: sumBy(successfulAccounts, (account) => account.pnl),
     totalAvailable: sumBy(successfulAccounts, (account) => account.available),
@@ -395,6 +465,8 @@ function emptyAccount(inputAddress: string, error: string): AccountDetail {
     activeMonths: 0,
     positionCount: 0,
     tradeCount: 0,
+    warnings: [],
+    fatalError: error,
     error
   };
 }
@@ -439,13 +511,15 @@ function shortAddress(address: string) {
 }
 
 function buildAccountText(account: AccountDetail) {
-  return exportFields.map((field) => field + ": " + (account[field] ?? "")).join("\n");
+  return exportFields
+    .map((field) => field + ": " + formatExportValue(account[field]))
+    .join("\n");
 }
 
 function buildTsv(rows: AccountDetail[]) {
   return [
     exportFields.join("\t"),
-    ...rows.map((row) => exportFields.map((field) => row[field] ?? "").join("\t"))
+    ...rows.map((row) => exportFields.map((field) => formatExportValue(row[field])).join("\t"))
   ].join("\n");
 }
 
@@ -459,10 +533,16 @@ function downloadBlob(fileName: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-function formatCsvCell(value: string | number | null) {
+function formatCsvCell(value: unknown) {
   if (value === null || value === undefined) return "";
-  const stringValue = String(value);
+  const stringValue = formatExportValue(value);
   return /[",\n]/.test(stringValue) ? "\"" + stringValue.replace(/"/g, "\"\"") + "\"" : stringValue;
+}
+
+function formatExportValue(value: unknown) {
+  if (Array.isArray(value)) return value.join("; ");
+  if (value === null || value === undefined) return "";
+  return String(value);
 }
 
 function sumBy<T>(items: T[], readValue: (item: T) => number): number {

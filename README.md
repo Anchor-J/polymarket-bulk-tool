@@ -6,10 +6,9 @@
 
 ## 功能
 
-- 批量输入 Polymarket EOA 地址或 proxy wallet 地址，每行一个
+- 批量输入 Polymarket 地址，每行一个；系统按输入地址直接查询
 - 前端最多接受 500 个地址，并按每批 25 个地址调用后端
 - 后端 API：`POST /api/accounts/bulk`
-- 自动尝试通过 Gamma public-profile 获取 proxyWallet
 - 查询当前持仓、历史已实现盈亏、交易记录、pUSD 可用余额
 - 展示净资产、盈亏、可用、持仓、交易额、池子数、最后活跃、活跃天数、活跃月数
 - 支持 CSV / JSON 导出
@@ -36,7 +35,7 @@ npm run build
 推荐配置：
 
 ```bash
-POLYGON_RPC_URLS=https://polygon-bor.publicnode.com,https://rpc-mainnet.polygon.technology,https://1rpc.io/matic
+POLYGON_RPC_URLS=https://polygon-bor-rpc.publicnode.com,https://rpc.ankr.com/polygon,https://rpc-mainnet.matic.quiknode.pro
 ```
 
 兼容旧配置：
@@ -47,7 +46,7 @@ POLYGON_RPC_URL=https://your-polygon-rpc.example
 
 读取优先级：
 
-1. 如果 `POLYGON_RPC_URLS` 存在，按逗号分割后依次尝试。
+1. 如果 `POLYGON_RPC_URLS` 存在，按逗号分割后从左到右依次尝试：第 1 个失败就尝试第 2 个，第 2 个失败就尝试第 3 个。
 2. 否则如果 `POLYGON_RPC_URL` 存在，使用单个 RPC。
 3. 如果两个变量都没有，pUSD 可用余额显示为 0，并在 debug 中记录 `POLYGON_RPC_URLS not configured`。
 
@@ -58,12 +57,18 @@ POLYGON_RPC_URL=https://your-polygon-rpc.example
 - 不要把带 API key 的私有 RPC 提交到 GitHub。
 - 公共 RPC 可能限流，生产环境建议使用稳定 RPC 服务。
 
-预留但默认不启用：
+代理配置默认不启用。推荐使用端口范围配置：
 
 ```bash
-USE_PROXY=false
-HTTPS_PROXY=
+USE_PROXY=true
+PROXY_HOST=dc.decodo.com
+PROXY_PORT_START=10001
+PROXY_PORT_END=10050
+PROXY_USER=your_proxy_user
+PROXY_PASS=your_proxy_password
 ```
+
+仍兼容旧变量 `HTTPS_PROXY_LIST` 和 `HTTPS_PROXY`。优先级为端口范围配置、`HTTPS_PROXY_LIST`、`HTTPS_PROXY`。
 
 不要把代理账号、密码、IP 或私有 RPC key 写进代码、README、前端或 GitHub。
 
@@ -138,7 +143,7 @@ Content-Type: application/json
 
 ## 计算规则
 
-- `proxyWallet`：优先读取 `https://gamma-api.polymarket.com/public-profile?address={address}`，没有则使用输入地址。
+- `proxyWallet`：使用输入地址作为默认查询地址，不再通过 Gamma public-profile 自动解析。
 - `available`：读取 Polygon 上 pUSD 合约 `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` 的 `balanceOf(proxyWallet)`，decimals = 6。RPC 按 `POLYGON_RPC_URLS` 列表顺序 fallback，兼容旧变量 `POLYGON_RPC_URL`。
 - `positionValue`：当前持仓 `currentValue` 求和。
 - `pnl`：当前持仓 `cashPnl` 求和 + closed positions 的 `realizedPnl` 求和。
@@ -154,7 +159,6 @@ Content-Type: application/json
 
 本项目只读取公开数据：
 
-- Gamma API：`https://gamma-api.polymarket.com/public-profile`
 - Data API：`https://data-api.polymarket.com/positions`
 - Data API：`https://data-api.polymarket.com/closed-positions`
 - Data API：`https://data-api.polymarket.com/trades`

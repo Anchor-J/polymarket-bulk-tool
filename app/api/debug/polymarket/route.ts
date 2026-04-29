@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { formatFetchError, serverFetch } from "../../../lib/serverFetch";
 
-const GAMMA_API_BASE_URL = "https://gamma-api.polymarket.com";
 const DATA_API_BASE_URL = "https://data-api.polymarket.com";
 const PUSD_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 const DEBUG_TIMEOUT_MS = 12_000;
@@ -9,7 +9,6 @@ const RESPONSE_BODY_SNIPPET_LENGTH = 300;
 type RawRecord = Record<string, unknown>;
 
 type RequestSource =
-  | "gamma-profile"
   | "positions"
   | "closed-positions"
   | "trades"
@@ -65,21 +64,7 @@ export async function GET(request: Request) {
   }
 
   const steps: DebugStep[] = [];
-  let proxyWallet = address;
-
-  const profileUrl = `${GAMMA_API_BASE_URL}/public-profile?address=${encodeURIComponent(address)}`;
-  const profileResult = await runJsonDiagnostic("gamma-profile", profileUrl);
-  steps.push(profileResult.step);
-
-  if (profileResult.data) {
-    proxyWallet =
-      findAddressByKey(profileResult.data, [
-        "proxyWallet",
-        "proxy_wallet",
-        "proxyAddress",
-        "proxy_address"
-      ]) ?? address;
-  }
+  const proxyWallet = address;
 
   const positionsParams = new URLSearchParams({
     user: proxyWallet,
@@ -320,7 +305,7 @@ async function fetchWithTimeout(
   }
 
   try {
-    return await fetch(url, {
+    return await serverFetch(url, {
       ...init,
       headers,
       cache: "no-store",
@@ -410,44 +395,6 @@ function normalizeAddress(input: string): string | null {
   return /^0x[a-f0-9]{40}$/i.test(value) ? value : null;
 }
 
-function findAddressByKey(value: unknown, keys: string[]): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = findAddressByKey(item, keys);
-
-      if (nested) {
-        return nested;
-      }
-    }
-
-    return null;
-  }
-
-  const record = value as RawRecord;
-
-  for (const key of keys) {
-    const field = record[key];
-
-    if (typeof field === "string" && normalizeAddress(field)) {
-      return field;
-    }
-  }
-
-  for (const nested of Object.values(record)) {
-    const nestedAddress = findAddressByKey(nested, keys);
-
-    if (nestedAddress) {
-      return nestedAddress;
-    }
-  }
-
-  return null;
-}
-
 function createBodySnippet(body: string): string {
   return body.replace(/\s+/g, " ").trim().slice(0, RESPONSE_BODY_SNIPPET_LENGTH);
 }
@@ -474,7 +421,9 @@ function sanitizeUrl(source: RequestSource, url: string): string {
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    return error.message === "fetch failed" || error.name === "ServerFetchError"
+      ? formatFetchError(error)
+      : error.message;
   }
 
   if (typeof error === "string") {

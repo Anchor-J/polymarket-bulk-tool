@@ -4,20 +4,7 @@
 
 ## 当前项目使用的数据源
 
-### 1. Gamma API
-
-用途：
-
-- 尝试通过 public-profile 查询输入地址对应的 proxyWallet
-- 失败时不阻塞主流程，直接使用 inputAddress 作为 proxyWallet
-
-Base URL:
-
-```text
-https://gamma-api.polymarket.com
-```
-
-### 2. Data API
+### 1. Data API
 
 用途：
 
@@ -31,7 +18,7 @@ Base URL:
 https://data-api.polymarket.com
 ```
 
-### 3. Polygon RPC
+### 2. Polygon RPC
 
 用途：
 
@@ -42,7 +29,17 @@ https://data-api.polymarket.com
 
 ## 当前项目不使用的数据源
 
-### 1. CLOB API
+### 1. Gamma API
+
+暂不使用。
+
+原因：
+
+- 当前项目只支持一种默认地址类型
+- 输入地址直接作为查询地址使用
+- 不再通过 public-profile 自动解析 proxyWallet
+
+### 2. CLOB API
 
 暂不使用。
 
@@ -54,7 +51,7 @@ https://data-api.polymarket.com
 - 不撤单
 - 不接钱包
 
-### 2. SDK
+### 3. SDK
 
 暂不使用。
 
@@ -64,13 +61,13 @@ https://data-api.polymarket.com
 - 不涉及认证交易
 - 手写 fetch 更容易控制代理、timeout、retry、错误展示
 
-### 3. Subgraph / Bitquery / Goldsky
+### 4. Subgraph / Bitquery / Goldsky
 
 暂不使用。
 
 原因：
 
-- 当前第一版优先使用官方 Gamma / Data API
+- 当前第一版优先使用官方 Data API
 - 链上底层数据后续再评估
 
 ## 字段来源说明

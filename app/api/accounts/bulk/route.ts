@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
+import { formatFetchError, serverFetch } from "../../../lib/serverFetch";
 
-const GAMMA_API_BASE_URL = "https://gamma-api.polymarket.com";
 const DATA_API_BASE_URL = "https://data-api.polymarket.com";
 const PUSD_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 const PUSD_DECIMALS = 6;
 const MAX_ADDRESSES_PER_REQUEST = 25;
 const ACCOUNT_CONCURRENCY = 3;
 const FETCH_TIMEOUT_MS = 6_000;
-const FAST_FETCH_TIMEOUT_MS = 2_500;
 const RPC_FETCH_TIMEOUT_MS = 3_000;
 const RETRY_ATTEMPTS = 2;
 const POSITIONS_LIMIT = 500;
@@ -18,7 +17,6 @@ const RESPONSE_BODY_SNIPPET_LENGTH = 300;
 type RawRecord = Record<string, unknown>;
 
 type RequestSource =
-  | "gamma-profile"
   | "positions"
   | "closed-positions"
   | "trades"
@@ -32,7 +30,6 @@ type AccountSummary = {
 };
 
 type AccountDebug = {
-  proxyProfileStatus?: string;
   positionsStatus?: string;
   closedPositionsStatus?: string;
   tradesStatus?: string;
@@ -59,6 +56,8 @@ type AccountDetail = {
   activeMonths: number;
   positionCount: number;
   tradeCount: number;
+  warnings: string[];
+  fatalError: string | null;
   error: string | null;
   debug?: AccountDebug;
 };
@@ -160,43 +159,6 @@ function readAddresses(body: unknown): string[] {
 function normalizeAddress(input: string): string | null {
   const value = input.trim().replace(/^["']|["']$/g, "");
   return /^0x[a-f0-9]{40}$/i.test(value) ? value : null;
-}
-
-async function getProxyWallet(address: string): Promise<{
-  proxyWallet: string;
-  error: string | null;
-  status: string;
-}> {
-  const url = `${GAMMA_API_BASE_URL}/public-profile?address=${encodeURIComponent(address)}`;
-
-  try {
-    const profile = await fetchJsonWithRetry<unknown>("gamma-profile", url, {}, {
-      attempts: 1,
-      timeoutMs: FAST_FETCH_TIMEOUT_MS
-    });
-    const proxyWallet = findAddressByKey(profile, [
-      "proxyWallet",
-      "proxy_wallet",
-      "proxyAddress",
-      "proxy_address"
-    ]);
-
-    return {
-      proxyWallet: proxyWallet ?? address,
-      error: null,
-      status: proxyWallet
-        ? `ok proxyWallet=${proxyWallet}`
-        : "ok proxyWallet not found; using input address"
-    };
-  } catch (error) {
-    const message = getErrorMessage(error);
-
-    return {
-      proxyWallet: address,
-      error: message,
-      status: message
-    };
-  }
 }
 
 async function getPositions(proxyWallet: string): Promise<RawRecord[]> {
@@ -382,52 +344,52 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     return emptyAccount(inputAddress, null, readAddressError(inputAddress));
   }
 
-  const errors: string[] = [];
+  const warnings: string[] = [];
+  const dataFailures: string[] = [];
   const debug: AccountDebug = {};
-  const { proxyWallet, error: proxyError, status: proxyStatus } =
-    await getProxyWallet(normalizedAddress);
-
-  debug.proxyProfileStatus = proxyStatus;
-
-  if (proxyError) {
-    errors.push(`proxy profile fetch failed: ${proxyError}`);
-  }
+  const proxyWallet = normalizedAddress;
 
   let positions: RawRecord[] = [];
   let closedPositions: RawRecord[] = [];
   let trades: RawRecord[] = [];
   let available = 0;
+  let positionsOk = false;
+  let closedPositionsOk = false;
+  let tradesOk = false;
 
   await Promise.all([
     getPositions(proxyWallet)
       .then((value) => {
         positions = value;
+        positionsOk = true;
         debug.positionsStatus = `ok rows=${value.length}`;
       })
       .catch((error) => {
         const message = getErrorMessage(error);
         debug.positionsStatus = message;
-        errors.push(`positions fetch failed: ${message}`);
+        dataFailures.push(`positions fetch failed: ${message}`);
       }),
     getClosedPositions(proxyWallet)
       .then((value) => {
         closedPositions = value;
+        closedPositionsOk = true;
         debug.closedPositionsStatus = `ok rows=${value.length}`;
       })
       .catch((error) => {
         const message = getErrorMessage(error);
         debug.closedPositionsStatus = message;
-        errors.push(`closed positions fetch failed: ${message}`);
+        dataFailures.push(`closed positions fetch failed: ${message}`);
       }),
     getTrades(proxyWallet)
       .then((value) => {
         trades = value;
+        tradesOk = true;
         debug.tradesStatus = `ok rows=${value.length}`;
       })
       .catch((error) => {
         const message = getErrorMessage(error);
         debug.tradesStatus = message;
-        errors.push(`trades fetch failed: ${message}`);
+        dataFailures.push(`trades fetch failed: ${message}`);
       }),
     getPusdBalance(proxyWallet)
       .then((result) => {
@@ -438,7 +400,7 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
         debug.rpcSuccessIndex = result.rpcSuccessIndex;
 
         if (result.error) {
-          errors.push(result.error);
+          warnings.push("pUSD balance unavailable");
         }
       })
       .catch((error) => {
@@ -447,9 +409,19 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
         debug.rpcConfigured = getPolygonRpcUrls().length > 0;
         debug.rpcTriedCount = getPolygonRpcUrls().length;
         debug.rpcSuccessIndex = null;
-        errors.push(`pUSD balance fetch failed: ${message}`);
+        warnings.push("pUSD balance unavailable");
       })
   ]);
+
+  const dataSuccessCount = [positionsOk, closedPositionsOk, tradesOk].filter(Boolean).length;
+  const fatalError =
+    dataSuccessCount === 0
+      ? dataFailures.join("; ") || "positions, closed positions and trades all failed"
+      : null;
+
+  if (!fatalError) {
+    warnings.push(...dataFailures);
+  }
 
   const positionValue = sumBy(positions, (position) =>
     getNumber(position.currentValue)
@@ -478,7 +450,9 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     activeMonths: tradeStats.activeMonths,
     positionCount: positions.length,
     tradeCount: trades.length,
-    error: errors.length > 0 ? errors.join("; ") : null,
+    warnings,
+    fatalError,
+    error: fatalError,
     debug
   };
 }
@@ -529,7 +503,7 @@ function buildTradeStats(trades: RawRecord[]) {
 }
 
 function buildSummary(accounts: AccountDetail[]): AccountSummary {
-  const successfulAccounts = accounts.filter((account) => !account.error);
+  const successfulAccounts = accounts.filter((account) => !account.fatalError);
 
   return {
     totalPnl: sumBy(successfulAccounts, (account) => account.pnl),
@@ -573,6 +547,8 @@ function emptyAccount(
     activeMonths: 0,
     positionCount: 0,
     tradeCount: 0,
+    warnings: [],
+    fatalError: error,
     error,
     debug: {}
   };
@@ -667,7 +643,7 @@ async function fetchWithTimeout(
   }
 
   try {
-    return await fetch(url, {
+    return await serverFetch(url, {
       ...init,
       headers,
       cache: "no-store",
@@ -750,7 +726,9 @@ function sanitizeUrl(source: RequestSource, url: string): string {
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    return error.message === "fetch failed" || error.name === "ServerFetchError"
+      ? formatFetchError(error)
+      : error.message;
   }
 
   if (typeof error === "string") {
@@ -788,44 +766,6 @@ async function mapWithConcurrency<T, R>(
   );
 
   return results;
-}
-
-function findAddressByKey(value: unknown, keys: string[]): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = findAddressByKey(item, keys);
-
-      if (nested) {
-        return nested;
-      }
-    }
-
-    return null;
-  }
-
-  const record = value as RawRecord;
-
-  for (const key of keys) {
-    const field = record[key];
-
-    if (typeof field === "string" && normalizeAddress(field)) {
-      return field;
-    }
-  }
-
-  for (const nested of Object.values(record)) {
-    const nestedAddress = findAddressByKey(nested, keys);
-
-    if (nestedAddress) {
-      return nestedAddress;
-    }
-  }
-
-  return null;
 }
 
 function readTimestampMs(value: unknown): number | null {
