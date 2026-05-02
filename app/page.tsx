@@ -331,7 +331,7 @@ export default function Home() {
                       <td className="whitespace-nowrap px-3 py-3 text-gray-500">{index + 1}</td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-gray-700">
                         <span title={account.inputAddress}>{shortAddress(account.inputAddress)}</span>
-                        <button type="button" onClick={() => copyText(account.inputAddress, "地址")} className="ml-2 rounded border border-gray-200 px-1.5 py-0.5 text-xs font-sans text-indigo-700 hover:bg-indigo-50">复制</button>
+                        <button type="button" onClick={() => copyText(readAccountAddress(account), "地址")} className="ml-2 rounded border border-gray-200 px-1.5 py-0.5 text-xs font-sans text-indigo-700 hover:bg-indigo-50">复制</button>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.netAsset)}</td>
                       <td className={pnlClass(account.pnl)}>{formatSignedMoney(account.pnl)}</td>
@@ -508,6 +508,10 @@ function formatSignedMoney(value: number) {
 
 function shortAddress(address: string) {
   return /^0x[a-f0-9]{40}$/i.test(address) ? address.slice(0, 6) + "..." + address.slice(-4) : address;
+}
+
+function readAccountAddress(account: AccountDetail) {
+  return account.inputAddress || account.proxyWallet || "";
 }
 
 function buildAccountText(account: AccountDetail) {

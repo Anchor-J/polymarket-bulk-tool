@@ -5,6 +5,7 @@ const DATA_API_BASE_URL = "https://data-api.polymarket.com";
 const PUSD_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 const DEBUG_TIMEOUT_MS = 12_000;
 const TRADES_LIMIT = 10_000;
+const ACTIVITY_LIMIT = 500;
 const RESPONSE_BODY_SNIPPET_LENGTH = 300;
 
 type RawRecord = Record<string, unknown>;
@@ -13,6 +14,7 @@ type RequestSource =
   | "positions"
   | "closed-positions"
   | "trades"
+  | "activity"
   | "pusd-balance-rpc";
 
 type DebugStep = {
@@ -38,6 +40,19 @@ type TradesSummary = {
   firstTradeTimestamp: number | null;
   lastTradeTimestamp: number | null;
   sampleTrades: RawRecord[];
+  error?: string;
+};
+
+type ActiveDaysCompare = {
+  tradesActiveDays: number;
+  activityActiveDays: number;
+  tradesActiveMonths: number;
+  activityActiveMonths: number;
+  tradesLastActiveText: string;
+  activityLastActiveText: string;
+  activityCount: number;
+  activityTypeCounts: Record<string, number>;
+  activitySample: RawRecord[];
   error?: string;
 };
 
@@ -114,6 +129,10 @@ export async function GET(request: Request) {
   steps.push(tradesResult.step);
 
   const tradesSummary = await readTradesSummary(proxyWallet);
+  const activeDaysCompare = await readActiveDaysCompare(
+    proxyWallet,
+    tradesSummary
+  );
 
   steps.push(await runPusdRpcDiagnostics(proxyWallet));
 
@@ -121,7 +140,8 @@ export async function GET(request: Request) {
     inputAddress: address,
     proxyWallet,
     steps,
-    tradesSummary
+    tradesSummary,
+    activeDaysCompare
   });
 }
 
@@ -230,6 +250,111 @@ function emptyTradesSummary(): TradesSummary {
     firstTradeTimestamp: null,
     lastTradeTimestamp: null,
     sampleTrades: []
+  };
+}
+
+async function readActiveDaysCompare(
+  proxyWallet: string,
+  tradesSummary: TradesSummary
+): Promise<ActiveDaysCompare> {
+  try {
+    const activities = await getAllActivities(proxyWallet);
+    const activitySummary = buildActivitySummary(activities);
+
+    return {
+      tradesActiveDays: tradesSummary.activeDays,
+      activityActiveDays: activitySummary.activeDays,
+      tradesActiveMonths: tradesSummary.activeMonths,
+      activityActiveMonths: activitySummary.activeMonths,
+      tradesLastActiveText: formatLastActiveText(tradesSummary.lastTradeTimestamp),
+      activityLastActiveText: formatLastActiveText(activitySummary.lastActivityTimestamp),
+      activityCount: activities.length,
+      activityTypeCounts: activitySummary.typeCounts,
+      activitySample: activities.slice(0, 5),
+      error: tradesSummary.error
+    };
+  } catch (error) {
+    return {
+      tradesActiveDays: tradesSummary.activeDays,
+      activityActiveDays: 0,
+      tradesActiveMonths: tradesSummary.activeMonths,
+      activityActiveMonths: 0,
+      tradesLastActiveText: formatLastActiveText(tradesSummary.lastTradeTimestamp),
+      activityLastActiveText: "-",
+      activityCount: 0,
+      activityTypeCounts: {},
+      activitySample: [],
+      error: `activity fetch failed: ${getErrorMessage(error)}`
+    };
+  }
+}
+
+async function getAllActivities(proxyWallet: string): Promise<RawRecord[]> {
+  const all: RawRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    const params = new URLSearchParams({
+      user: proxyWallet,
+      limit: String(ACTIVITY_LIMIT),
+      offset: String(offset)
+    });
+    const result = await fetchJsonOnce(
+      "activity",
+      `${DATA_API_BASE_URL}/activity?${params.toString()}`,
+      {}
+    );
+    const page = Array.isArray(result.data) ? result.data.filter(isRecord) : [];
+
+    all.push(...page);
+
+    if (page.length < ACTIVITY_LIMIT) {
+      return all;
+    }
+
+    offset += ACTIVITY_LIMIT;
+  }
+}
+
+function buildActivitySummary(activities: RawRecord[]) {
+  const activeDays = new Set<string>();
+  const activeMonths = new Set<string>();
+  const typeCounts: Record<string, number> = {};
+  let lastActivityTimestamp: number | null = null;
+
+  for (const activity of activities) {
+    const day = timestampToDateKey(activity.timestamp);
+    const month = timestampToMonthKey(activity.timestamp);
+    const timestampMs = readTimestampMs(activity.timestamp);
+    const type =
+      getString(activity.type) ??
+      getString(activity.activityType) ??
+      getString(activity.eventType) ??
+      "UNKNOWN";
+
+    if (day) {
+      activeDays.add(day);
+    }
+
+    if (month) {
+      activeMonths.add(month);
+    }
+
+    if (timestampMs !== null) {
+      lastActivityTimestamp =
+        lastActivityTimestamp === null
+          ? timestampMs
+          : Math.max(lastActivityTimestamp, timestampMs);
+    }
+
+    typeCounts[type] = (typeCounts[type] ?? 0) + 1;
+  }
+
+  return {
+    activeDays: activeDays.size,
+    activeMonths: activeMonths.size,
+    lastActivityTimestamp,
+    typeCounts
   };
 }
 
@@ -593,6 +718,28 @@ function timestampToDateKey(timestamp: unknown): string {
 function timestampToMonthKey(timestamp: unknown): string {
   const dateKey = timestampToDateKey(timestamp);
   return dateKey ? dateKey.slice(0, 7) : "";
+}
+
+function formatLastActiveText(timestampMs: number | null): string {
+  return timestampMs === null ? "-" : formatDaysAgo(diffUtcDays(timestampMs, Date.now()));
+}
+
+function diffUtcDays(fromMs: number, toMs: number): number {
+  const fromDate = new Date(new Date(fromMs).toISOString().slice(0, 10));
+  const toDate = new Date(new Date(toMs).toISOString().slice(0, 10));
+
+  return Math.max(
+    0,
+    Math.floor((toDate.getTime() - fromDate.getTime()) / 86_400_000)
+  );
+}
+
+function formatDaysAgo(daysAgo: number): string {
+  if (daysAgo === 0) {
+    return "今天";
+  }
+
+  return `${daysAgo}天前`;
 }
 
 function getString(value: unknown): string | null {

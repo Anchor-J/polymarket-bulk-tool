@@ -8,6 +8,7 @@ const MAX_ADDRESSES_PER_REQUEST = 25;
 const ACCOUNT_CONCURRENCY = 3;
 const FETCH_TIMEOUT_MS = 6_000;
 const RPC_FETCH_TIMEOUT_MS = 3_000;
+const ACTIVITY_FETCH_TIMEOUT_MS = 4_000;
 const RETRY_ATTEMPTS = 2;
 const POSITIONS_LIMIT = 500;
 const CLOSED_POSITIONS_LIMIT = 50;
@@ -87,6 +88,17 @@ type PusdBalanceResult = {
   rpcTriedCount: number;
   rpcSuccessIndex: number | null;
   error: string | null;
+};
+
+type ActivitySummaryResult = {
+  ok: boolean;
+  activeDays: number;
+  activeMonths: number;
+  lastActiveAt: string | null;
+  lastActiveDaysAgo: number | null;
+  lastActiveText: string;
+  status: string;
+  warning: string | null;
 };
 
 class DiagnosticFetchError extends Error {
@@ -255,7 +267,8 @@ async function getActivities(proxyWallet: string): Promise<RawRecord[]> {
     });
     const page = await fetchArray(
       "activity",
-      `${DATA_API_BASE_URL}/activity?${params.toString()}`
+      `${DATA_API_BASE_URL}/activity?${params.toString()}`,
+      { attempts: 1, timeoutMs: ACTIVITY_FETCH_TIMEOUT_MS }
     );
 
     all.push(...page);
@@ -265,6 +278,31 @@ async function getActivities(proxyWallet: string): Promise<RawRecord[]> {
     }
 
     offset += ACTIVITY_LIMIT;
+  }
+}
+
+async function getActivitySummary(proxyWallet: string): Promise<ActivitySummaryResult> {
+  try {
+    const activities = await getActivities(proxyWallet);
+    const summary = buildActivityStats(activities);
+
+    return {
+      ok: true,
+      ...summary,
+      status: `ok rows=${activities.length}`,
+      warning: null
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      activeDays: 0,
+      activeMonths: 0,
+      lastActiveAt: null,
+      lastActiveDaysAgo: null,
+      lastActiveText: "-",
+      status: getErrorMessage(error),
+      warning: "activity fetch failed"
+    };
   }
 }
 
@@ -397,12 +435,11 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
   let positions: RawRecord[] = [];
   let closedPositions: RawRecord[] = [];
   let trades: RawRecord[] = [];
-  let activities: RawRecord[] = [];
+  let activitySummary: ActivitySummaryResult | null = null;
   let available = 0;
   let positionsOk = false;
   let closedPositionsOk = false;
   let tradesOk = false;
-  let activityOk = false;
 
   await Promise.all([
     getPositions(proxyWallet)
@@ -438,11 +475,14 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
         debug.tradesStatus = message;
         dataFailures.push(`trades fetch failed: ${message}`);
       }),
-    getActivities(proxyWallet)
-      .then((value) => {
-        activities = value;
-        activityOk = true;
-        debug.activityStatus = `ok rows=${value.length}`;
+    getActivitySummary(proxyWallet)
+      .then((result) => {
+        activitySummary = result;
+        debug.activityStatus = result.status;
+
+        if (result.warning) {
+          warnings.push(result.warning);
+        }
       })
       .catch((error) => {
         const message = getErrorMessage(error);
@@ -489,7 +529,11 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     getNumber(position.realizedPnl)
   );
   const tradeStats = buildTradeStats(trades);
-  const activityStats = buildActivityStats(activities);
+  const resolvedActivitySummary = activitySummary as ActivitySummaryResult | null;
+  const activityStats =
+    resolvedActivitySummary && resolvedActivitySummary.ok
+      ? resolvedActivitySummary
+      : null;
   const pnl = openPnl + realizedPnl;
 
   return {
@@ -502,11 +546,11 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     volumeUsd: tradeStats.volumeUsd,
     volumeShares: tradeStats.volumeShares,
     marketCount: tradeStats.marketCount,
-    lastActiveAt: tradeStats.lastActiveAt,
-    lastActiveDaysAgo: tradeStats.lastActiveDaysAgo,
-    lastActiveText: tradeStats.lastActiveText,
-    activeDays: activityOk ? activityStats.activeDays : tradeStats.activeDays,
-    activeMonths: tradeStats.activeMonths,
+    lastActiveAt: activityStats?.lastActiveAt ?? tradeStats.lastActiveAt,
+    lastActiveDaysAgo: activityStats?.lastActiveDaysAgo ?? tradeStats.lastActiveDaysAgo,
+    lastActiveText: activityStats?.lastActiveText ?? tradeStats.lastActiveText,
+    activeDays: activityStats?.activeDays ?? tradeStats.activeDays,
+    activeMonths: activityStats?.activeMonths ?? tradeStats.activeMonths,
     positionCount: positions.length,
     tradeCount: trades.length,
     warnings,
@@ -518,17 +562,37 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
 
 function buildActivityStats(activities: RawRecord[]) {
   const activeDays = new Set<string>();
+  const activeMonths = new Set<string>();
+  let lastActiveMs: number | null = null;
 
   for (const activity of activities) {
     const day = timestampToDateKey(activity.timestamp);
+    const month = timestampToMonthKey(activity.timestamp);
+    const timestampMs = readTimestampMs(activity.timestamp);
 
     if (day) {
       activeDays.add(day);
     }
+
+    if (month) {
+      activeMonths.add(month);
+    }
+
+    if (timestampMs !== null) {
+      lastActiveMs =
+        lastActiveMs === null ? timestampMs : Math.max(lastActiveMs, timestampMs);
+    }
   }
 
+  const lastActiveDaysAgo =
+    lastActiveMs === null ? null : diffUtcDays(lastActiveMs, Date.now());
+
   return {
-    activeDays: activeDays.size
+    activeDays: activeDays.size,
+    activeMonths: activeMonths.size,
+    lastActiveAt: lastActiveMs === null ? null : new Date(lastActiveMs).toISOString(),
+    lastActiveDaysAgo,
+    lastActiveText: formatDaysAgo(lastActiveDaysAgo)
   };
 }
 
@@ -649,9 +713,10 @@ function readAddressError(input: string): string {
 
 async function fetchArray(
   source: RequestSource,
-  url: string
+  url: string,
+  options: { attempts?: number; timeoutMs?: number } = {}
 ): Promise<RawRecord[]> {
-  const data = await fetchJsonWithRetry<unknown>(source, url);
+  const data = await fetchJsonWithRetry<unknown>(source, url, {}, options);
   return Array.isArray(data) ? data.filter(isRecord) : [];
 }
 
