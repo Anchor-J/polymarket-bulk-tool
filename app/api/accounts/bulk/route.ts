@@ -12,6 +12,7 @@ const RETRY_ATTEMPTS = 2;
 const POSITIONS_LIMIT = 500;
 const CLOSED_POSITIONS_LIMIT = 50;
 const TRADES_LIMIT = 10_000;
+const ACTIVITY_LIMIT = 500;
 const RESPONSE_BODY_SNIPPET_LENGTH = 300;
 
 type RawRecord = Record<string, unknown>;
@@ -20,6 +21,7 @@ type RequestSource =
   | "positions"
   | "closed-positions"
   | "trades"
+  | "activity"
   | "pusd-balance-rpc";
 
 type AccountSummary = {
@@ -33,6 +35,7 @@ type AccountDebug = {
   positionsStatus?: string;
   closedPositionsStatus?: string;
   tradesStatus?: string;
+  activityStatus?: string;
   pusdStatus?: string;
   rpcConfigured?: boolean;
   rpcTriedCount?: number;
@@ -240,6 +243,31 @@ async function getTrades(proxyWallet: string): Promise<RawRecord[]> {
   }
 }
 
+async function getActivities(proxyWallet: string): Promise<RawRecord[]> {
+  const all: RawRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    const params = new URLSearchParams({
+      user: proxyWallet,
+      limit: String(ACTIVITY_LIMIT),
+      offset: String(offset)
+    });
+    const page = await fetchArray(
+      "activity",
+      `${DATA_API_BASE_URL}/activity?${params.toString()}`
+    );
+
+    all.push(...page);
+
+    if (page.length < ACTIVITY_LIMIT) {
+      return all;
+    }
+
+    offset += ACTIVITY_LIMIT;
+  }
+}
+
 async function getPusdBalance(proxyWallet: string): Promise<PusdBalanceResult> {
   const rpcUrls = getPolygonRpcUrls();
 
@@ -369,10 +397,12 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
   let positions: RawRecord[] = [];
   let closedPositions: RawRecord[] = [];
   let trades: RawRecord[] = [];
+  let activities: RawRecord[] = [];
   let available = 0;
   let positionsOk = false;
   let closedPositionsOk = false;
   let tradesOk = false;
+  let activityOk = false;
 
   await Promise.all([
     getPositions(proxyWallet)
@@ -407,6 +437,17 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
         const message = getErrorMessage(error);
         debug.tradesStatus = message;
         dataFailures.push(`trades fetch failed: ${message}`);
+      }),
+    getActivities(proxyWallet)
+      .then((value) => {
+        activities = value;
+        activityOk = true;
+        debug.activityStatus = `ok rows=${value.length}`;
+      })
+      .catch((error) => {
+        const message = getErrorMessage(error);
+        debug.activityStatus = message;
+        warnings.push("activity fetch failed");
       }),
     getPusdBalance(proxyWallet)
       .then((result) => {
@@ -448,6 +489,7 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     getNumber(position.realizedPnl)
   );
   const tradeStats = buildTradeStats(trades);
+  const activityStats = buildActivityStats(activities);
   const pnl = openPnl + realizedPnl;
 
   return {
@@ -463,7 +505,7 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     lastActiveAt: tradeStats.lastActiveAt,
     lastActiveDaysAgo: tradeStats.lastActiveDaysAgo,
     lastActiveText: tradeStats.lastActiveText,
-    activeDays: tradeStats.activeDays,
+    activeDays: activityOk ? activityStats.activeDays : tradeStats.activeDays,
     activeMonths: tradeStats.activeMonths,
     positionCount: positions.length,
     tradeCount: trades.length,
@@ -471,6 +513,22 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     fatalError,
     error: fatalError,
     debug
+  };
+}
+
+function buildActivityStats(activities: RawRecord[]) {
+  const activeDays = new Set<string>();
+
+  for (const activity of activities) {
+    const day = timestampToDateKey(activity.timestamp);
+
+    if (day) {
+      activeDays.add(day);
+    }
+  }
+
+  return {
+    activeDays: activeDays.size
   };
 }
 
