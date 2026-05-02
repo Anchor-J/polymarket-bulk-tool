@@ -4,6 +4,7 @@ import { formatFetchError, serverFetch } from "../../../lib/serverFetch";
 const DATA_API_BASE_URL = "https://data-api.polymarket.com";
 const PUSD_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 const DEBUG_TIMEOUT_MS = 12_000;
+const TRADES_LIMIT = 10_000;
 const RESPONSE_BODY_SNIPPET_LENGTH = 300;
 
 type RawRecord = Record<string, unknown>;
@@ -25,6 +26,19 @@ type DebugStep = {
   rpcConfigured?: boolean;
   rpcTriedCount?: number;
   rpcSuccessIndex?: number | null;
+};
+
+type TradesSummary = {
+  tradeCount: number;
+  volumeShares: number;
+  volumeUsd: number;
+  marketCount: number;
+  activeDays: number;
+  activeMonths: number;
+  firstTradeTimestamp: number | null;
+  lastTradeTimestamp: number | null;
+  sampleTrades: RawRecord[];
+  error?: string;
 };
 
 type FetchDiagnostic = {
@@ -90,7 +104,8 @@ export async function GET(request: Request) {
   const tradesParams = new URLSearchParams({
     user: proxyWallet,
     limit: "2",
-    offset: "0"
+    offset: "0",
+    takerOnly: "false"
   });
   const tradesResult = await runJsonDiagnostic(
     "trades",
@@ -98,13 +113,124 @@ export async function GET(request: Request) {
   );
   steps.push(tradesResult.step);
 
+  const tradesSummary = await readTradesSummary(proxyWallet);
+
   steps.push(await runPusdRpcDiagnostics(proxyWallet));
 
   return NextResponse.json({
     inputAddress: address,
     proxyWallet,
-    steps
+    steps,
+    tradesSummary
   });
+}
+
+async function readTradesSummary(proxyWallet: string): Promise<TradesSummary> {
+  try {
+    const trades = await getAllTrades(proxyWallet);
+    return buildTradesSummary(trades);
+  } catch (error) {
+    return {
+      ...emptyTradesSummary(),
+      error: getErrorMessage(error)
+    };
+  }
+}
+
+async function getAllTrades(proxyWallet: string): Promise<RawRecord[]> {
+  const all: RawRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    const params = new URLSearchParams({
+      user: proxyWallet,
+      limit: String(TRADES_LIMIT),
+      offset: String(offset),
+      takerOnly: "false"
+    });
+    const result = await fetchJsonOnce(
+      "trades",
+      `${DATA_API_BASE_URL}/trades?${params.toString()}`,
+      {}
+    );
+    const page = Array.isArray(result.data) ? result.data.filter(isRecord) : [];
+
+    all.push(...page);
+
+    if (page.length < TRADES_LIMIT) {
+      return all;
+    }
+
+    offset += TRADES_LIMIT;
+  }
+}
+
+function buildTradesSummary(trades: RawRecord[]): TradesSummary {
+  const conditionIds = new Set<string>();
+  const activeDays = new Set<string>();
+  const activeMonths = new Set<string>();
+  let volumeShares = 0;
+  let volumeUsd = 0;
+  let firstTradeMs: number | null = null;
+  let lastTradeMs: number | null = null;
+
+  for (const trade of trades) {
+    const price = getNumber(trade.price) ?? 0;
+    const size = getNumber(trade.size) ?? 0;
+    const conditionId = getString(trade.conditionId);
+    const timestampMs = readTimestampMs(trade.timestamp);
+
+    volumeShares += size;
+    volumeUsd += price * size;
+
+    if (conditionId) {
+      conditionIds.add(conditionId);
+    }
+
+    const day = timestampToDateKey(trade.timestamp);
+    const month = timestampToMonthKey(trade.timestamp);
+
+    if (day) {
+      activeDays.add(day);
+    }
+
+    if (month) {
+      activeMonths.add(month);
+    }
+
+    if (timestampMs !== null) {
+      firstTradeMs =
+        firstTradeMs === null ? timestampMs : Math.min(firstTradeMs, timestampMs);
+      lastTradeMs =
+        lastTradeMs === null ? timestampMs : Math.max(lastTradeMs, timestampMs);
+    }
+  }
+
+  return {
+    tradeCount: trades.length,
+    volumeShares,
+    volumeUsd,
+    marketCount: conditionIds.size,
+    activeDays: activeDays.size,
+    activeMonths: activeMonths.size,
+    firstTradeTimestamp: firstTradeMs,
+    lastTradeTimestamp: lastTradeMs,
+    sampleTrades: trades.slice(0, 3)
+  };
+}
+
+function emptyTradesSummary(): TradesSummary {
+  return {
+    tradeCount: 0,
+    volumeShares: 0,
+    volumeUsd: 0,
+    marketCount: 0,
+    activeDays: 0,
+    activeMonths: 0,
+    firstTradeTimestamp: null,
+    lastTradeTimestamp: null,
+    sampleTrades: []
+  };
 }
 
 async function runPusdRpcDiagnostics(proxyWallet: string): Promise<DebugStep> {
@@ -438,6 +564,55 @@ function isAbortError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || /abort|timeout/i.test(error.message))
   );
+}
+
+function readTimestampMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const numberValue = Number(value);
+
+    if (Number.isFinite(numberValue)) {
+      return numberValue < 1_000_000_000_000 ? numberValue * 1000 : numberValue;
+    }
+
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function timestampToDateKey(timestamp: unknown): string {
+  const timestampMs = readTimestampMs(timestamp);
+  return timestampMs === null ? "" : new Date(timestampMs).toISOString().slice(0, 10);
+}
+
+function timestampToMonthKey(timestamp: unknown): string {
+  const dateKey = timestampToDateKey(timestamp);
+  return dateKey ? dateKey.slice(0, 7) : "";
+}
+
+function getString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[$,%\s,]/g, ""));
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function isRecord(value: unknown): value is RawRecord {
