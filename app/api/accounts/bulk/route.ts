@@ -119,7 +119,7 @@ export async function POST(request: Request) {
   const addresses = readAddresses(body);
 
   if (addresses.length === 0) {
-    return NextResponse.json(
+    return jsonNoStore(
       {
         summary: emptySummary(),
         accounts: [],
@@ -130,7 +130,7 @@ export async function POST(request: Request) {
   }
 
   if (addresses.length > MAX_ADDRESSES_PER_REQUEST) {
-    return NextResponse.json(
+    return jsonNoStore(
       {
         summary: emptySummary(),
         accounts: addresses.map((address) =>
@@ -148,10 +148,20 @@ export async function POST(request: Request) {
     buildAccountDetail
   );
 
-  return NextResponse.json({
+  return jsonNoStore({
     summary: buildSummary(accounts),
     accounts
   } satisfies BulkAccountsResponse);
+}
+
+function jsonNoStore(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store");
+
+  return NextResponse.json(body, {
+    ...init,
+    headers
+  });
 }
 
 function readAddresses(body: unknown): string[] {

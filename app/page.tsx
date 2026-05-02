@@ -237,7 +237,10 @@ export default function Home() {
       <header className="border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <h1 className="text-lg font-semibold tracking-normal">Polymarket 地址批量分析</h1>
-          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">Public Data</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">Version: v3-activity-days</span>
+            <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">Public Data</span>
+          </div>
         </div>
       </header>
 
