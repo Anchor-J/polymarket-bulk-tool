@@ -162,15 +162,31 @@ function normalizeAddress(input: string): string | null {
 }
 
 async function getPositions(proxyWallet: string): Promise<RawRecord[]> {
-  const params = new URLSearchParams({
-    user: proxyWallet,
-    limit: String(POSITIONS_LIMIT),
-    sizeThreshold: "0",
-    sortBy: "CURRENT",
-    sortDirection: "DESC"
-  });
+  const all: RawRecord[] = [];
+  let offset = 0;
 
-  return fetchArray("positions", `${DATA_API_BASE_URL}/positions?${params.toString()}`);
+  while (true) {
+    const params = new URLSearchParams({
+      user: proxyWallet,
+      limit: String(POSITIONS_LIMIT),
+      offset: String(offset),
+      sizeThreshold: "0",
+      sortBy: "CURRENT",
+      sortDirection: "DESC"
+    });
+    const page = await fetchArray(
+      "positions",
+      `${DATA_API_BASE_URL}/positions?${params.toString()}`
+    );
+
+    all.push(...page);
+
+    if (page.length < POSITIONS_LIMIT) {
+      return all;
+    }
+
+    offset += POSITIONS_LIMIT;
+  }
 }
 
 async function getClosedPositions(proxyWallet: string): Promise<RawRecord[]> {
@@ -206,7 +222,8 @@ async function getTrades(proxyWallet: string): Promise<RawRecord[]> {
     const params = new URLSearchParams({
       user: proxyWallet,
       limit: String(TRADES_LIMIT),
-      offset: String(offset)
+      offset: String(offset),
+      takerOnly: "false"
     });
     const page = await fetchArray(
       "trades",
@@ -479,9 +496,17 @@ function buildTradeStats(trades: RawRecord[]) {
     }
 
     if (timestampMs !== null) {
-      const day = formatUtcDate(timestampMs);
-      activeDays.add(day);
-      activeMonths.add(day.slice(0, 7));
+      const day = timestampToDateKey(trade.timestamp);
+      const month = timestampToMonthKey(trade.timestamp);
+
+      if (day) {
+        activeDays.add(day);
+      }
+
+      if (month) {
+        activeMonths.add(month);
+      }
+
       lastActiveMs =
         lastActiveMs === null ? timestampMs : Math.max(lastActiveMs, timestampMs);
     }
@@ -785,6 +810,16 @@ function readTimestampMs(value: unknown): number | null {
   }
 
   return null;
+}
+
+function timestampToDateKey(timestamp: unknown): string {
+  const timestampMs = readTimestampMs(timestamp);
+  return timestampMs === null ? "" : formatUtcDate(timestampMs);
+}
+
+function timestampToMonthKey(timestamp: unknown): string {
+  const dateKey = timestampToDateKey(timestamp);
+  return dateKey ? dateKey.slice(0, 7) : "";
 }
 
 function formatUtcDate(timestampMs: number): string {
