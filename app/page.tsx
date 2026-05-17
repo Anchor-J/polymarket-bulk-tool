@@ -44,6 +44,7 @@ const MAX_FRONTEND_ADDRESSES = 500;
 const BATCH_SIZE = 25;
 const BATCH_REQUEST_TIMEOUT_MS = 45_000;
 const BATCH_RETRY_ATTEMPTS = 2;
+const ADDRESS_PATTERN = /^0x[a-f0-9]{40}$/i;
 
 const tableHeaders = [
   "#",
@@ -132,7 +133,8 @@ export default function Home() {
   const [copyStatus, setCopyStatus] = useState("");
   const [retryingAddress, setRetryingAddress] = useState("");
 
-  const inputCount = useMemo(() => parseAddressLines(query).length, [query]);
+  const inputStats = useMemo(() => getInputStats(query), [query]);
+  const inputCount = inputStats.total;
   const summary = useMemo(() => buildSummary(accounts), [accounts]);
   const successfulCount = accounts.filter((account) => !account.fatalError).length;
   const filteredAccounts = useMemo(() => {
@@ -200,6 +202,15 @@ export default function Home() {
     setAccounts([]);
     setProgress({ done: 0, total: 0 });
     setError(message);
+    setCopyStatus("");
+  }
+
+  function clearAll() {
+    setQuery("");
+    setAccounts([]);
+    setProgress({ done: 0, total: 0 });
+    setError("");
+    setSearch("");
     setCopyStatus("");
   }
 
@@ -305,12 +316,17 @@ export default function Home() {
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="text-sm text-gray-500">
                 {inputCount} / {MAX_FRONTEND_ADDRESSES} 地址
+                {inputStats.duplicateCount > 0 && <span className="ml-3 text-amber-700">重复 {inputStats.duplicateCount} 个</span>}
+                {inputStats.invalidCount > 0 && <span className="ml-3 text-red-700">非法 {inputStats.invalidCount} 个</span>}
                 {progress.total > 0 && <span className="ml-3 font-medium text-indigo-700">已查询 {progress.done} / {progress.total}</span>}
                 {copyStatus && <span className="ml-3 text-emerald-700">{copyStatus}</span>}
               </div>
               <div className="flex flex-wrap gap-2">
                 <button type="submit" disabled={isLoading} className="inline-flex h-10 items-center justify-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-400">
                   {isLoading ? "查询中..." : "开始查询"}
+                </button>
+                <button type="button" onClick={clearAll} disabled={isLoading || (query.length === 0 && accounts.length === 0 && !error)} className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400">
+                  清空
                 </button>
                 <button type="button" onClick={copyAllAddressInfo} disabled={accounts.length === 0 || isLoading} className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400">
                   复制全部地址信息
@@ -482,6 +498,33 @@ function parseAddressLines(value: string): string[] {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function getInputStats(value: string) {
+  const lines = parseAddressLines(value);
+  const seen = new Set<string>();
+  let duplicateCount = 0;
+  let invalidCount = 0;
+
+  for (const line of lines) {
+    const normalized = line.toLowerCase();
+
+    if (!ADDRESS_PATTERN.test(line)) {
+      invalidCount += 1;
+    }
+
+    if (seen.has(normalized)) {
+      duplicateCount += 1;
+    } else {
+      seen.add(normalized);
+    }
+  }
+
+  return {
+    total: lines.length,
+    duplicateCount,
+    invalidCount
+  };
+}
+
 function buildSummary(accounts: AccountDetail[]): AccountSummary {
   const successfulAccounts = accounts.filter((account) => !account.fatalError);
   return {
@@ -577,7 +620,7 @@ function formatSignedMoney(value: number) {
 }
 
 function shortAddress(address: string) {
-  return /^0x[a-f0-9]{40}$/i.test(address) ? address.slice(0, 6) + "..." + address.slice(-4) : address;
+  return ADDRESS_PATTERN.test(address) ? address.slice(0, 6) + "..." + address.slice(-4) : address;
 }
 
 function readAccountAddress(account: AccountDetail) {
