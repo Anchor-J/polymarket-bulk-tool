@@ -60,6 +60,9 @@ type AccountDetail = {
   activeMonths: number;
   positionCount: number;
   tradeCount: number;
+  redeemCount: number;
+  rewardCount: number;
+  rewardAmount: number;
   warnings: string[];
   fatalError: string | null;
   error: string | null;
@@ -92,6 +95,7 @@ type PusdBalanceResult = {
 
 type ActivitySummaryResult = {
   ok: boolean;
+  activities: RawRecord[];
   activeDays: number;
   activeMonths: number;
   lastActiveAt: string | null;
@@ -99,6 +103,16 @@ type ActivitySummaryResult = {
   lastActiveText: string;
   status: string;
   warning: string | null;
+};
+
+type SettlementRewardSummary = {
+  closedPositionCount: number;
+  redeemActivityCount: number;
+  redeemPositionCount: number;
+  soldPositionCount: number;
+  rewardCount: number;
+  rewardAmount: number;
+  pendingRedeemCount: number;
 };
 
 class DiagnosticFetchError extends Error {
@@ -298,6 +312,7 @@ async function getActivitySummary(proxyWallet: string): Promise<ActivitySummaryR
 
     return {
       ok: true,
+      activities,
       ...summary,
       status: `ok rows=${activities.length}`,
       warning: null
@@ -305,6 +320,7 @@ async function getActivitySummary(proxyWallet: string): Promise<ActivitySummaryR
   } catch (error) {
     return {
       ok: false,
+      activities: [],
       activeDays: 0,
       activeMonths: 0,
       lastActiveAt: null,
@@ -544,6 +560,11 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     resolvedActivitySummary && resolvedActivitySummary.ok
       ? resolvedActivitySummary
       : null;
+  const settlementRewardSummary = buildSettlementRewardSummary(
+    closedPositions,
+    trades,
+    resolvedActivitySummary?.ok ? resolvedActivitySummary.activities : []
+  );
   const pnl = openPnl + realizedPnl;
 
   return {
@@ -563,6 +584,9 @@ async function buildAccountDetail(inputAddress: string): Promise<AccountDetail> 
     activeMonths: activityStats?.activeMonths ?? tradeStats.activeMonths,
     positionCount: positions.length,
     tradeCount: trades.length,
+    redeemCount: settlementRewardSummary.redeemPositionCount,
+    rewardCount: settlementRewardSummary.rewardCount,
+    rewardAmount: settlementRewardSummary.rewardAmount,
     warnings,
     fatalError,
     error: fatalError,
@@ -603,6 +627,73 @@ function buildActivityStats(activities: RawRecord[]) {
     lastActiveAt: lastActiveMs === null ? null : new Date(lastActiveMs).toISOString(),
     lastActiveDaysAgo,
     lastActiveText: formatDaysAgo(lastActiveDaysAgo)
+  };
+}
+
+function buildSettlementRewardSummary(
+  closedPositions: RawRecord[],
+  trades: RawRecord[],
+  activities: RawRecord[]
+): SettlementRewardSummary {
+  const closedPositionKeys = new Set<string>();
+  const redeemPositionKeys = new Set<string>();
+  const soldPositionKeys = new Set<string>();
+  let redeemActivityCount = 0;
+  let rewardCount = 0;
+  let rewardAmount = 0;
+
+  for (const closedPosition of closedPositions) {
+    const key = readPositionKey(closedPosition, { includeTransactionFallback: false });
+
+    if (key) {
+      closedPositionKeys.add(key);
+    }
+  }
+
+  for (const activity of activities) {
+    const type = getString(activity.type)?.toUpperCase();
+
+    if (type === "REDEEM") {
+      redeemActivityCount += 1;
+
+      const key = readPositionKey(activity, { includeTransactionFallback: true });
+
+      if (key) {
+        redeemPositionKeys.add(key);
+      }
+    }
+
+    if (type === "REWARD") {
+      rewardCount += 1;
+      rewardAmount += getNumber(activity.usdcSize) ?? getNumber(activity.size) ?? 0;
+    }
+  }
+
+  for (const trade of trades) {
+    const side = getString(trade.side)?.toUpperCase();
+
+    if (side !== "SELL") {
+      continue;
+    }
+
+    const key = readPositionKey(trade, { includeTransactionFallback: true });
+
+    if (key) {
+      soldPositionKeys.add(key);
+    }
+  }
+
+  return {
+    closedPositionCount: closedPositionKeys.size,
+    redeemActivityCount,
+    redeemPositionCount: redeemPositionKeys.size,
+    soldPositionCount: soldPositionKeys.size,
+    rewardCount,
+    rewardAmount,
+    pendingRedeemCount: Math.max(
+      closedPositionKeys.size - redeemPositionKeys.size - soldPositionKeys.size,
+      0
+    )
   };
 }
 
@@ -704,6 +795,9 @@ function emptyAccount(
     activeMonths: 0,
     positionCount: 0,
     tradeCount: 0,
+    redeemCount: 0,
+    rewardCount: 0,
+    rewardAmount: 0,
     warnings: [],
     fatalError: error,
     error,
@@ -1000,6 +1094,43 @@ function sumBy<T>(items: T[], readValue: (item: T) => number | null): number {
 
 function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readPositionKey(
+  record: RawRecord,
+  options: { includeTransactionFallback: boolean }
+): string | null {
+  const conditionId = getKeyPart(record.conditionId);
+  const asset = getKeyPart(record.asset);
+  const outcomeIndex = getKeyPart(record.outcomeIndex);
+  const transactionHash = getKeyPart(record.transactionHash);
+
+  if (conditionId && asset && outcomeIndex !== null) {
+    return `${conditionId}:${asset}:${outcomeIndex}`;
+  }
+
+  if (conditionId && asset) {
+    return `${conditionId}:${asset}`;
+  }
+
+  if (options.includeTransactionFallback && transactionHash && conditionId) {
+    return `${transactionHash}:${conditionId}`;
+  }
+
+  return null;
+}
+
+function getKeyPart(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  return null;
 }
 
 function getNumber(value: unknown): number | null {

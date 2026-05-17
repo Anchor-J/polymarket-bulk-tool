@@ -26,6 +26,9 @@ type AccountDetail = {
   activeMonths: number;
   positionCount: number;
   tradeCount: number;
+  redeemCount: number;
+  rewardCount: number;
+  rewardAmount: number;
   warnings: string[];
   fatalError: string | null;
   error: string | null;
@@ -57,6 +60,9 @@ const tableHeaders = [
   "活跃月数",
   "持仓数",
   "交易数",
+  "结算数",
+  "奖励数",
+  "奖励金额",
   "状态/错误"
 ];
 
@@ -76,10 +82,38 @@ const exportFields: Array<keyof AccountDetail> = [
   "activeMonths",
   "positionCount",
   "tradeCount",
+  "redeemCount",
+  "rewardCount",
+  "rewardAmount",
   "warnings",
   "fatalError",
   "error"
 ];
+
+const exportLabels: Record<keyof AccountDetail, string> = {
+  inputAddress: "输入地址",
+  proxyWallet: "查询地址",
+  netAsset: "净资产",
+  pnl: "盈亏",
+  available: "可用",
+  positionValue: "持仓",
+  volumeUsd: "交易额/u",
+  volumeShares: "交易额/s",
+  marketCount: "池子数",
+  lastActiveAt: "最后活跃时间",
+  lastActiveDaysAgo: "最后活跃天数",
+  lastActiveText: "最后活跃",
+  activeDays: "活跃天数",
+  activeMonths: "活跃月数",
+  positionCount: "持仓数",
+  tradeCount: "交易数",
+  redeemCount: "结算数",
+  rewardCount: "奖励数",
+  rewardAmount: "奖励金额",
+  warnings: "警告",
+  fatalError: "致命错误",
+  error: "错误"
+};
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
@@ -217,7 +251,10 @@ export default function Home() {
       return;
     }
 
-    const csv = [exportFields, ...accounts.map((account) => exportFields.map((field) => account[field]))]
+    const csv = [
+      exportFields.map((field) => exportLabels[field]),
+      ...accounts.map((account) => exportFields.map((field) => account[field]))
+    ]
       .map((line) => line.map(formatCsvCell).join(","))
       .join("\n");
     downloadBlob("polymarket-accounts.csv", csv, "text/csv;charset=utf-8;");
@@ -238,7 +275,7 @@ export default function Home() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <h1 className="text-lg font-semibold tracking-normal">Polymarket 地址批量分析</h1>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500">Version: v3-activity-days</span>
+            <span className="text-xs text-gray-500">Version: v3-settlement-rewards</span>
             <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">Public Data</span>
           </div>
         </div>
@@ -317,7 +354,7 @@ export default function Home() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[1320px] divide-y divide-gray-200 text-sm">
+            <table className="min-w-[1600px] divide-y divide-gray-200 text-sm">
               <thead className="bg-indigo-600 text-white">
                 <tr>
                   {tableHeaders.map((header) => <th key={header} scope="col" className="whitespace-nowrap px-3 py-3 text-left font-medium">{header}</th>)}
@@ -348,6 +385,9 @@ export default function Home() {
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.activeMonths}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.positionCount}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.tradeCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.redeemCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.rewardCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.rewardAmount)}</td>
                       <td className="min-w-64 px-3 py-3 text-gray-700">
                         {account.fatalError ? (
                           <div className="space-y-2">
@@ -468,6 +508,9 @@ function emptyAccount(inputAddress: string, error: string): AccountDetail {
     activeMonths: 0,
     positionCount: 0,
     tradeCount: 0,
+    redeemCount: 0,
+    rewardCount: 0,
+    rewardAmount: 0,
     warnings: [],
     fatalError: error,
     error
