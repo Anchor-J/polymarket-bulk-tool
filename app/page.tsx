@@ -374,8 +374,8 @@ export default function Home() {
                 ) : (
                   filteredAccounts.map((account, index) => (
                     <tr key={account.inputAddress + "-" + index}>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-500">{index + 1}</td>
-                      <td className="sticky left-0 z-20 whitespace-nowrap bg-white px-3 py-3 font-mono text-xs text-gray-700 shadow-[1px_0_0_0_#e5e7eb]">
+                      <td className="sticky left-0 z-30 w-12 whitespace-nowrap bg-white px-3 py-3 text-gray-500 shadow-[1px_0_0_0_#e5e7eb]">{index + 1}</td>
+                      <td className="sticky left-12 z-20 whitespace-nowrap bg-white px-3 py-3 font-mono text-xs text-gray-700 shadow-[1px_0_0_0_#e5e7eb]">
                         <span title={account.inputAddress}>{shortAddress(account.inputAddress)}</span>
                         <button type="button" onClick={() => copyText(readAccountAddress(account), "地址")} className="ml-2 rounded border border-gray-200 px-1.5 py-0.5 text-xs font-sans text-indigo-700 hover:bg-indigo-50">复制</button>
                       </td>
@@ -542,8 +542,12 @@ function amountToneClass(value: number) {
 function headerClass(index: number) {
   const base = "whitespace-nowrap px-3 py-3 font-medium";
 
+  if (index === 0) {
+    return base + " sticky left-0 z-40 w-12 bg-indigo-600 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
+  }
+
   if (index === 1) {
-    return base + " sticky left-0 z-30 bg-indigo-600 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
+    return base + " sticky left-12 z-30 bg-indigo-600 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
   }
 
   if (index === tableHeaders.length - 1) {
