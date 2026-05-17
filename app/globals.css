@@ -17,8 +17,10 @@ html {
 body {
   min-height: 100%;
   margin: 0;
-  background: #f7f8fb;
+  background: #f8fbff;
   color: #111827;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 a {

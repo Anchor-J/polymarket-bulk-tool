@@ -67,6 +67,15 @@ const tableHeaders = [
   "状态/错误"
 ];
 
+const headerDescriptions: Record<string, string> = {
+  "交易额/u": "sum(price * size)",
+  "交易额/s": "sum(size)",
+  "活跃天数": "/activity 日期去重",
+  "结算数": "REDEEM 去重数量",
+  "奖励数": "REWARD 记录数量",
+  "奖励金额": "REWARD usdcSize 求和"
+};
+
 const exportFields: Array<keyof AccountDetail> = [
   "inputAddress",
   "proxyWallet",
@@ -121,7 +130,7 @@ const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2
 });
 
-const rightAlignedColumnIndexes = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+const rightAlignedColumnIndexes = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -283,134 +292,187 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f6f8fc] text-gray-950">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <h1 className="text-lg font-semibold tracking-normal">Polymarket 地址批量分析</h1>
+    <main className="min-h-screen bg-[linear-gradient(135deg,#f8fbff_0%,#eef2ff_42%,#f7f3ff_100%)] text-slate-950">
+      <header className="border-b border-indigo-100/70 bg-white/85 shadow-sm shadow-indigo-100/40 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500">Version: v3-wide-layout</span>
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-500 shadow-lg shadow-indigo-200">
+              <div className="h-4 w-4 rounded-md border-2 border-white/90" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold tracking-normal text-slate-950">Polymarket 地址批量分析</h1>
+              <p className="mt-1 text-sm text-slate-500">批量查询地址资产、盈亏、交易、活跃、结算与奖励数据</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 shadow-sm">Version: v3-visual-polish</span>
             <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">Public Data</span>
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">No Wallet</span>
+            <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">No Login</span>
           </div>
         </div>
       </header>
 
       <div className="mx-auto w-full max-w-[1800px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-        <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="border-b border-gray-200 pb-2">
-              <span className="inline-flex border-b-2 border-indigo-600 px-2 pb-2 text-sm font-medium text-indigo-700">粘贴地址</span>
-            </div>
-
-            <textarea
-              id="addresses"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="每行输入一个 Polymarket 地址"
-              className="h-44 w-full resize-none rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm leading-6 text-gray-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-            />
-
-            <div className="rounded-md border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-              查询公开数据，不连接钱包，不下单。单次最多 500 个地址，系统会自动分批处理。
-            </div>
-
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="text-sm text-gray-500">
-                {inputCount} / {MAX_FRONTEND_ADDRESSES} 地址
-                {inputStats.duplicateCount > 0 && <span className="ml-3 text-amber-700">重复 {inputStats.duplicateCount} 个</span>}
-                {inputStats.invalidCount > 0 && <span className="ml-3 text-red-700">非法 {inputStats.invalidCount} 个</span>}
-                {progress.total > 0 && <span className="ml-3 font-medium text-indigo-700">已查询 {progress.done} / {progress.total}</span>}
-                {copyStatus && <span className="ml-3 text-emerald-700">{copyStatus}</span>}
+        <section className="rounded-2xl border border-white/80 bg-white/90 p-5 shadow-xl shadow-indigo-100/60 backdrop-blur">
+          <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[1.45fr_1fr_0.9fr]">
+            <div className="space-y-4 xl:border-r xl:border-slate-200 xl:pr-5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">⌁</span>
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-950">批量地址输入</h2>
+                    <p className="mt-1 text-sm text-slate-500">每行一个地址，支持批量粘贴。</p>
+                  </div>
+                </div>
               </div>
+
+              <textarea
+                id="addresses"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="每行一个 Polymarket 地址"
+                className="h-36 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm leading-6 text-slate-900 shadow-inner shadow-slate-100 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              />
+
               <div className="flex flex-wrap gap-2">
-                <button type="submit" disabled={isLoading} className="inline-flex h-10 items-center justify-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-400">
+                <button type="submit" disabled={isLoading} className="inline-flex h-10 items-center justify-center rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 px-5 text-sm font-semibold text-white shadow-md shadow-indigo-200 transition hover:shadow-lg hover:shadow-indigo-200 disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400">
                   {isLoading ? "查询中..." : "开始查询"}
                 </button>
-                <button type="button" onClick={clearAll} disabled={isLoading || (query.length === 0 && accounts.length === 0 && !error)} className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400">
+                <button type="button" onClick={clearAll} disabled={isLoading || (query.length === 0 && accounts.length === 0 && !error)} className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300">
                   清空
                 </button>
-                <button type="button" onClick={copyAllAddressInfo} disabled={accounts.length === 0 || isLoading} className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400">
+              </div>
+
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-900">
+                查询公开数据，不连接钱包，不下单。系统自动分批处理，单次最多 {MAX_FRONTEND_ADDRESSES} 个地址。
+              </div>
+            </div>
+
+            <div className="space-y-4 xl:border-r xl:border-slate-200 xl:px-5">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-700">#</span>
+                <h2 className="text-base font-semibold text-slate-950">地址统计</h2>
+              </div>
+
+              <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:grid-cols-4 xl:grid-cols-2 2xl:grid-cols-4">
+                <InputStat label="有效地址" value={inputStats.validCount} tone="emerald" />
+                <InputStat label="重复地址" value={inputStats.duplicateCount} tone="amber" />
+                <InputStat label="非法地址" value={inputStats.invalidCount} tone="red" />
+                <InputStat label="上限" value={MAX_FRONTEND_ADDRESSES} tone="slate" />
+              </div>
+
+              <div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                  <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: Math.min(100, (inputCount / MAX_FRONTEND_ADDRESSES) * 100) + "%" }} />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+                  <span>已输入 {inputCount} / {MAX_FRONTEND_ADDRESSES}</span>
+                  <span>{formatPercent(inputCount / MAX_FRONTEND_ADDRESSES)}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 text-sm">
+                {progress.total > 0 && <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 font-medium text-indigo-700">已查询 {progress.done} / {progress.total}</span>}
+                {copyStatus && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-medium text-emerald-700">{copyStatus}</span>}
+              </div>
+            </div>
+
+            <div className="space-y-4 xl:pl-1">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-700">⇩</span>
+                <h2 className="text-base font-semibold text-slate-950">导出结果</h2>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                <button type="button" onClick={copyAllAddressInfo} disabled={accounts.length === 0 || isLoading} className="inline-flex h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:text-slate-400">
                   复制全部地址信息
                 </button>
-                <button type="button" onClick={exportCsv} disabled={accounts.length === 0 || isLoading} className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400">
+                <button type="button" onClick={exportCsv} disabled={accounts.length === 0 || isLoading} className="inline-flex h-11 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400">
                   导出 CSV
                 </button>
-                <button type="button" onClick={exportJson} disabled={accounts.length === 0 || isLoading} className="inline-flex h-10 items-center justify-center rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400">
+                <button type="button" onClick={exportJson} disabled={accounts.length === 0 || isLoading} className="inline-flex h-11 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 px-4 text-sm font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400">
                   导出 JSON
                 </button>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-500">
+                <p className="font-medium text-slate-700">查询结果</p>
+                <p className="mt-2">{successfulCount} 成功 / {accounts.length} 总计</p>
               </div>
             </div>
           </form>
         </section>
 
         {progress.total > 0 && (
-          <div className="rounded-lg border-l-4 border-indigo-500 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-800">
+          <div className="rounded-xl border border-indigo-100 border-l-4 border-l-indigo-500 bg-indigo-50/90 px-4 py-3 text-sm font-medium text-indigo-800 shadow-sm">
             已查询 {progress.done} 个地址，成功 {successfulCount} 个
           </div>
         )}
 
-        {error && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{error}</div>}
+        {error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">{error}</div>}
 
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryBlock label="总盈亏" value={formatSignedMoney(summary.totalPnl)} tone={summary.totalPnl} note="历史累计 + 当前浮盈亏" />
-          <SummaryBlock label="可用余额" value={formatMoney(summary.totalAvailable)} note="pUSD" />
-          <SummaryBlock label="持仓预估" value={formatMoney(summary.totalPositionValue)} note="currentValue 合计" />
-          <SummaryBlock label="净资产总计" value={formatMoney(summary.totalNetAsset)} note="可用 + 持仓" />
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryBlock label="总盈亏" value={formatSignedMoney(summary.totalPnl)} tone={summary.totalPnl} note="历史累计 + 当前浮盈亏" accent="from-rose-500 to-red-500" icon="pnl" />
+          <SummaryBlock label="可用余额" value={formatMoney(summary.totalAvailable)} note="pUSD 可用余额" accent="from-sky-500 to-indigo-500" icon="wallet" />
+          <SummaryBlock label="持仓预估" value={formatMoney(summary.totalPositionValue)} note="currentValue 预估" accent="from-violet-500 to-fuchsia-500" icon="layers" />
+          <SummaryBlock label="净资产总计" value={formatMoney(summary.totalNetAsset)} note="可用 + 持仓预估" accent="from-indigo-600 to-violet-600" icon="cube" emphasis />
         </section>
 
-        <section className="min-w-0 rounded-lg border border-gray-200 bg-white shadow-sm">
-          <div className="space-y-3 border-b border-gray-200 p-4">
+        <section className="min-w-0 overflow-hidden rounded-xl border border-white/80 bg-white/95 shadow-xl shadow-indigo-100/50 backdrop-blur">
+          <div className="space-y-3 border-b border-slate-200 p-4">
             <div>
-              <h2 className="text-base font-semibold text-gray-950">查询详单</h2>
-              <p className="mt-1 text-sm text-gray-500">{successfulCount} 成功 / {accounts.length} 总计</p>
+              <h2 className="text-base font-semibold text-slate-950">查询详单</h2>
+              <p className="mt-1 text-sm text-slate-500">{successfulCount} 成功 / {accounts.length} 总计</p>
             </div>
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索地址或错误信息..."
-              className="h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-inner shadow-slate-100 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
             />
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[1600px] divide-y divide-gray-200 text-sm">
-              <thead className="bg-indigo-600 text-white">
+            <table className="min-w-[1700px] divide-y divide-slate-200 text-sm">
+              <thead className="bg-gradient-to-r from-indigo-700 via-violet-700 to-indigo-700 text-white">
                 <tr>
                   {tableHeaders.map((header, headerIndex) => (
-                    <th key={header} scope="col" className={headerClass(headerIndex)}>
+                    <th key={header} scope="col" title={headerDescriptions[header]} className={headerClass(headerIndex)}>
                       {header}
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
+              <tbody className="divide-y divide-slate-100 bg-white">
                 {filteredAccounts.length === 0 ? (
                   <tr>
-                    <td colSpan={tableHeaders.length} className="px-4 py-12 text-center text-gray-500">{isLoading ? "正在读取公开数据..." : "暂无数据"}</td>
+                    <td colSpan={tableHeaders.length} className="px-4 py-12 text-center text-slate-500">{isLoading ? "正在读取公开数据..." : "暂无数据"}</td>
                   </tr>
                 ) : (
                   filteredAccounts.map((account, index) => (
-                    <tr key={account.inputAddress + "-" + index}>
-                      <td className="sticky left-0 z-30 w-12 whitespace-nowrap bg-white px-3 py-3 text-gray-500 shadow-[1px_0_0_0_#e5e7eb]">{index + 1}</td>
-                      <td className="sticky left-12 z-20 whitespace-nowrap bg-white px-3 py-3 font-mono text-xs text-gray-700 shadow-[1px_0_0_0_#e5e7eb]">
+                    <tr key={account.inputAddress + "-" + index} className="group hover:bg-indigo-50/50">
+                      <td className="sticky left-0 z-30 w-12 whitespace-nowrap bg-white px-3 py-3 text-slate-500 shadow-[1px_0_0_0_#e5e7eb] group-hover:bg-indigo-50">{index + 1}</td>
+                      <td className="sticky left-12 z-20 whitespace-nowrap bg-white px-3 py-3 font-mono text-xs text-slate-700 shadow-[1px_0_0_0_#e5e7eb] group-hover:bg-indigo-50">
                         <span title={account.inputAddress}>{shortAddress(account.inputAddress)}</span>
-                        <button type="button" onClick={() => copyText(readAccountAddress(account), "地址")} className="ml-2 rounded border border-gray-200 px-1.5 py-0.5 text-xs font-sans text-indigo-700 hover:bg-indigo-50">复制</button>
+                        <button type="button" onClick={() => copyText(readAccountAddress(account), "地址")} className="ml-2 rounded-md border border-indigo-100 bg-white px-1.5 py-0.5 text-xs font-sans text-indigo-700 shadow-sm hover:bg-indigo-50">复制</button>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.netAsset)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{formatMoney(account.netAsset)}</td>
                       <td className={pnlClass(account.pnl)}>{formatSignedMoney(account.pnl)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.available)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.positionValue)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.volumeUsd)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatNumber(account.volumeShares)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.marketCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.lastActiveText}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.activeDays}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.activeMonths}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.positionCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.tradeCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.redeemCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.rewardCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.rewardAmount)}</td>
-                      <td className="sticky right-0 z-20 min-w-64 bg-white px-3 py-3 text-gray-700 shadow-[-1px_0_0_0_#e5e7eb]">
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{formatMoney(account.available)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{formatMoney(account.positionValue)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{formatMoney(account.volumeUsd)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{formatNumber(account.volumeShares)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.marketCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.lastActiveText}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.activeDays}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.activeMonths}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.positionCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.tradeCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.redeemCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{account.rewardCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-slate-800">{formatMoney(account.rewardAmount)}</td>
+                      <td className="sticky right-0 z-20 min-w-56 bg-white px-3 py-3 text-slate-700 shadow-[-1px_0_0_0_#e5e7eb] group-hover:bg-indigo-50">
                         {account.fatalError ? (
                           <div className="flex items-center gap-2">
                             <span title={account.fatalError} className="rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700">Error</span>
@@ -520,6 +582,7 @@ function getInputStats(value: string) {
 
   return {
     total: lines.length,
+    validCount: lines.length - invalidCount,
     duplicateCount,
     invalidCount
   };
@@ -566,13 +629,98 @@ function emptyAccount(inputAddress: string, error: string): AccountDetail {
   };
 }
 
-function SummaryBlock({ label, value, tone = 0, note }: { label: string; value: string; tone?: number; note: string }) {
+function InputStat({ label, value, tone }: { label: string; value: number; tone: "emerald" | "amber" | "red" | "slate" }) {
+  const toneClass = {
+    emerald: "text-emerald-600",
+    amber: "text-amber-600",
+    red: "text-red-600",
+    slate: "text-slate-700"
+  }[tone];
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 text-center shadow-sm">
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className={"mt-3 text-2xl font-semibold " + amountToneClass(tone)}>{value}</p>
-      <p className="mt-2 text-xs text-gray-500">{note}</p>
+    <div className="border-b border-r border-slate-200 px-4 py-3 text-center last:border-r-0 sm:border-b-0 xl:border-b 2xl:border-b-0">
+      <p className={"text-lg font-semibold " + toneClass}>{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{label}</p>
     </div>
+  );
+}
+
+function SummaryBlock({
+  label,
+  value,
+  tone = 0,
+  note,
+  accent,
+  icon,
+  emphasis = false
+}: {
+  label: string;
+  value: string;
+  tone?: number;
+  note: string;
+  accent: string;
+  icon: SummaryIconName;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className={"relative overflow-hidden rounded-2xl border bg-white/95 p-5 shadow-xl shadow-indigo-100/50 transition hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-indigo-100/70 " + (emphasis ? "border-indigo-300 ring-1 ring-indigo-200" : "border-white/80")}>
+      <div className={"absolute left-0 top-0 h-full w-1 bg-gradient-to-b " + accent} />
+      <div className="flex items-center gap-4">
+        <span className={"flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br shadow-lg shadow-indigo-100 " + accent}>
+          <SummaryIcon name={icon} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-500">{label}</p>
+          <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+            <span className={amountToneClass(tone)}>{value}</span>
+          </p>
+          <p className="mt-3 text-xs text-slate-500">{note}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type SummaryIconName = "pnl" | "wallet" | "layers" | "cube";
+
+function SummaryIcon({ name }: { name: SummaryIconName }) {
+  if (name === "pnl") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7 text-white">
+        <path d="M12 3v18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M16.5 7.5H10a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6H7.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (name === "wallet") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7 text-white">
+        <path d="M4 7.5h13.5A2.5 2.5 0 0 1 20 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-10Z" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+        <path d="M4 8.5 15.2 4.4A2 2 0 0 1 18 6.25V8" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+        <path d="M16 13.5h4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+        <circle cx="16" cy="13.5" r="1" fill="currentColor" />
+      </svg>
+    );
+  }
+
+  if (name === "layers") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7 text-white">
+        <path d="m12 4 8 4-8 4-8-4 8-4Z" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+        <path d="m4 12 8 4 8-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="m4 16 8 4 8-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7 text-white">
+      <path d="m12 3 7.5 4.25v8.5L12 20l-7.5-4.25v-8.5L12 3Z" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+      <path d="m4.8 7.4 7.2 4.1 7.2-4.1" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinejoin="round" />
+      <path d="M12 11.5V20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="m8.5 9.45 7-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.65" />
+    </svg>
   );
 }
 
@@ -583,18 +731,18 @@ function amountToneClass(value: number) {
 }
 
 function headerClass(index: number) {
-  const base = "whitespace-nowrap px-3 py-3 font-medium";
+  const base = "whitespace-nowrap px-3 py-3 font-semibold";
 
   if (index === 0) {
-    return base + " sticky left-0 z-40 w-12 bg-indigo-600 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
+    return base + " sticky left-0 z-40 w-12 bg-indigo-700 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
   }
 
   if (index === 1) {
-    return base + " sticky left-12 z-30 bg-indigo-600 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
+    return base + " sticky left-12 z-30 bg-indigo-700 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
   }
 
   if (index === tableHeaders.length - 1) {
-    return base + " sticky right-0 z-30 bg-indigo-600 text-left shadow-[-1px_0_0_0_rgba(255,255,255,0.25)]";
+    return base + " sticky right-0 z-30 bg-indigo-700 text-left shadow-[-1px_0_0_0_rgba(255,255,255,0.25)]";
   }
 
   return base + (rightAlignedColumnIndexes.has(index) ? " text-right" : " text-left");
@@ -610,6 +758,10 @@ function formatMoney(value: number) {
 
 function formatNumber(value: number) {
   return numberFormatter.format(value);
+}
+
+function formatPercent(value: number) {
+  return Math.min(100, Math.max(0, value * 100)).toFixed(1) + "%";
 }
 
 function formatSignedMoney(value: number) {
