@@ -412,8 +412,8 @@ export default function Home() {
                       <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.rewardAmount)}</td>
                       <td className="sticky right-0 z-20 min-w-64 bg-white px-3 py-3 text-gray-700 shadow-[-1px_0_0_0_#e5e7eb]">
                         {account.fatalError ? (
-                          <div className="space-y-2">
-                            <span className="block text-red-700">{account.fatalError}</span>
+                          <div className="flex items-center gap-2">
+                            <span title={account.fatalError} className="rounded-full bg-red-50 px-2 py-1 text-xs font-medium text-red-700">Error</span>
                             <button
                               type="button"
                               onClick={() => retryAccount(account.inputAddress)}
@@ -424,7 +424,7 @@ export default function Home() {
                             </button>
                           </div>
                         ) : account.warnings.length > 0 ? (
-                          <span className="text-amber-700">{account.warnings.join("; ")}</span>
+                          <span title={account.warnings.join("; ")} className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">Warning</span>
                         ) : (
                           <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">OK</span>
                         )}
