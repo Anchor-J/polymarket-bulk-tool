@@ -120,6 +120,8 @@ const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2
 });
 
+const rightAlignedColumnIndexes = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [accounts, setAccounts] = useState<AccountDetail[]>([]);
@@ -357,7 +359,11 @@ export default function Home() {
             <table className="min-w-[1600px] divide-y divide-gray-200 text-sm">
               <thead className="bg-indigo-600 text-white">
                 <tr>
-                  {tableHeaders.map((header) => <th key={header} scope="col" className="whitespace-nowrap px-3 py-3 text-left font-medium">{header}</th>)}
+                  {tableHeaders.map((header, headerIndex) => (
+                    <th key={header} scope="col" className={headerClass(headerIndex)}>
+                      {header}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
@@ -369,26 +375,26 @@ export default function Home() {
                   filteredAccounts.map((account, index) => (
                     <tr key={account.inputAddress + "-" + index}>
                       <td className="whitespace-nowrap px-3 py-3 text-gray-500">{index + 1}</td>
-                      <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-gray-700">
+                      <td className="sticky left-0 z-20 whitespace-nowrap bg-white px-3 py-3 font-mono text-xs text-gray-700 shadow-[1px_0_0_0_#e5e7eb]">
                         <span title={account.inputAddress}>{shortAddress(account.inputAddress)}</span>
                         <button type="button" onClick={() => copyText(readAccountAddress(account), "地址")} className="ml-2 rounded border border-gray-200 px-1.5 py-0.5 text-xs font-sans text-indigo-700 hover:bg-indigo-50">复制</button>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.netAsset)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.netAsset)}</td>
                       <td className={pnlClass(account.pnl)}>{formatSignedMoney(account.pnl)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.available)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.positionValue)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.volumeUsd)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatNumber(account.volumeShares)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.marketCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.lastActiveText}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.activeDays}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.activeMonths}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.positionCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.tradeCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.redeemCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{account.rewardCount}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-800">{formatMoney(account.rewardAmount)}</td>
-                      <td className="min-w-64 px-3 py-3 text-gray-700">
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.available)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.positionValue)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.volumeUsd)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatNumber(account.volumeShares)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.marketCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.lastActiveText}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.activeDays}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.activeMonths}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.positionCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.tradeCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.redeemCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{account.rewardCount}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-800">{formatMoney(account.rewardAmount)}</td>
+                      <td className="sticky right-0 z-20 min-w-64 bg-white px-3 py-3 text-gray-700 shadow-[-1px_0_0_0_#e5e7eb]">
                         {account.fatalError ? (
                           <div className="space-y-2">
                             <span className="block text-red-700">{account.fatalError}</span>
@@ -533,8 +539,22 @@ function amountToneClass(value: number) {
   return "text-gray-950";
 }
 
+function headerClass(index: number) {
+  const base = "whitespace-nowrap px-3 py-3 font-medium";
+
+  if (index === 1) {
+    return base + " sticky left-0 z-30 bg-indigo-600 text-left shadow-[1px_0_0_0_rgba(255,255,255,0.25)]";
+  }
+
+  if (index === tableHeaders.length - 1) {
+    return base + " sticky right-0 z-30 bg-indigo-600 text-left shadow-[-1px_0_0_0_rgba(255,255,255,0.25)]";
+  }
+
+  return base + (rightAlignedColumnIndexes.has(index) ? " text-right" : " text-left");
+}
+
 function pnlClass(value: number) {
-  return "whitespace-nowrap px-3 py-3 font-medium " + amountToneClass(value);
+  return "whitespace-nowrap px-3 py-3 text-right font-medium " + amountToneClass(value);
 }
 
 function formatMoney(value: number) {
